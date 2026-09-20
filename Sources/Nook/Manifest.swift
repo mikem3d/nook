@@ -38,7 +38,11 @@ final class Art {
     private var cache: [String: SKTexture] = [:]
 
     init() throws {
-        guard let dir = Bundle.module.url(forResource: "Assets", withExtension: nil) else {
+        // In Nook.app the SwiftPM resource bundle sits in Contents/Resources (scripts/bundle.sh);
+        // SwiftPM's own `Bundle.module` only looks beside the executable's bundle root, where
+        // code signing forbids it, and then at the absolute build path, which exists only here.
+        let packaged = Bundle.main.resourceURL.flatMap { Bundle(url: $0.appendingPathComponent("Nook_Nook.bundle")) }
+        guard let dir = (packaged ?? Bundle.module).url(forResource: "Assets", withExtension: nil) else {
             throw NSError(domain: "Nook", code: 1, userInfo: [NSLocalizedDescriptionKey: "Assets folder missing from bundle"])
         }
         root = dir
