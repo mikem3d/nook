@@ -31,7 +31,7 @@ final class AgentWindow: NSPanel {
 
     init(session: AgentSession, art: Art, roomIndex: Int) {
         self.session = session
-        room = RoomScene(art: art, roomIndex: roomIndex, title: session.label)
+        room = RoomScene(art: art, roomIndex: roomIndex, title: session.label, avatarSeed: session.cwd?.path)
         super.init(contentRect: NSRect(x: 0, y: 0, width: RoomScene.W * 2, height: RoomScene.H * 2),
                    styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         isFloatingPanel = true
