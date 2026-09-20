@@ -1,4 +1,5 @@
 import AppKit
+import Carbon.HIToolbox
 
 /// Push-to-talk, transcribed on device, routed by agent name.
 ///
@@ -7,19 +8,15 @@ import AppKit
 /// answer a pending permission. The pieces live in Voice/: the key, the recogniser, the HUD and
 /// the (pure, unit-tested) router. Nothing here runs until the key is pressed.
 final class Voice: Feature {
-    /// "control+option+v" style; see `KeyCombo`.
-    static let hotkeyKey = "nook.hotkey.voice"
+    /// Id in the shared HotkeyCenter; the chosen combo persists under `nook.hotkey.voice`.
+    static let hotkeyID = "voice"
     /// Extra spoken names per agent label, for labels the recogniser mangles:
     /// `defaults write dev.nook.app nook.voice.aliases -dict asche-kron '("ash crown")'`
     static let aliasesKey = "nook.voice.aliases"
-    private static let defaultHotkey = "control+option+v"
 
     private weak var app: AppController?
-    // INTEGRATION: replace with the shared HotkeyCenter (see PushToTalkKey.swift).
-    private let key: PushToTalkKey = CarbonPushToTalkKey()
     private let capture = VoiceCapture()
     private lazy var hud = VoiceHUD()
-    private var combo: KeyCombo?
 
     private var holding = false
     private var pressedAt = Date.distantPast
@@ -29,18 +26,13 @@ final class Voice: Feature {
 
     func install(in app: AppController) {
         self.app = app
-        UserDefaults.standard.register(defaults: [Self.hotkeyKey: Self.defaultHotkey])
-        combo = KeyCombo(UserDefaults.standard.string(forKey: Self.hotkeyKey) ?? "") ?? KeyCombo(Self.defaultHotkey)
-        let registered = combo.map { key.register($0) } ?? false
-
-        let shown = combo?.display ?? "?"
-        let item = NSMenuItem(title: registered ? "Hold \(shown) to Talk" : "Talk Key \(shown) Is Taken", action: nil, keyEquivalent: "")
+        HotkeyCenter.shared.register(id: Self.hotkeyID, title: "Hold to talk",
+                                     defaultCombo: KeyCombo(kVK_ANSI_V, [.control, .option]),
+                                     onPress: { [weak self] in self?.pressed() },
+                                     onRelease: { [weak self] in self?.released() })
+        let item = NSMenuItem(title: "Hold \(shownKey) to Talk", action: nil, keyEquivalent: "")
         item.isEnabled = false
         app.addMenuItem(item)
-        guard registered else { return }
-
-        key.onPress = { [weak self] in self?.pressed() }
-        key.onRelease = { [weak self] in self?.released() }
         capture.onLevel = { [weak self] in self?.hud.level($0) }
         capture.onPartial = { [weak self] in self?.heard($0) }
         capture.onFinish = { [weak self] in self?.finished($0) }
@@ -48,6 +40,10 @@ final class Voice: Feature {
         NotificationCenter.default.addObserver(forName: .nookActiveChanged, object: app, queue: .main) { [weak self] _ in
             if let active = self?.app?.active { self?.recent = active }
         }
+    }
+
+    private var shownKey: String {
+        HotkeyCenter.shared.info(for: Self.hotkeyID)?.combo?.description ?? "the talk key"
     }
 
     // MARK: key
@@ -65,7 +61,7 @@ final class Voice: Feature {
                 self.hud.notice("Voice", detail: problem.message, link: problem.settingsURL)
             case .readyAfterPrompt:
                 self.holding = false
-                self.hud.notice("Voice is ready", detail: "Hold \(self.combo?.display ?? "the key") and speak.")
+                self.hud.notice("Voice is ready", detail: "Hold \(self.shownKey) and speak.")
             case .ready:
                 guard self.holding else { return } // released before we got here
                 self.listen()
