@@ -47,10 +47,10 @@ def degrade(rgba: np.ndarray, factor: float = 7.3, blur: float = 0.18, noise: fl
 
 
 def drift_row(sheet: np.ndarray, row: int, frames: int, fw: int = 32, fh: int = 32,
-              grow: float = 0.06, shift: int = 1, recolour=(90, 140, 200)) -> np.ndarray:
+              grow: float = 0.06, shift: int = 1, recolour=((74, 122, 200), (138, 82, 168))) -> np.ndarray:
     """Frame k of the row gets k*grow bigger and k*shift px to the right; in the second half of
-    the row the most common colour (the shirt) turns into `recolour`. All colours stay inside
-    the sheet's palette, like drift that survived normalisation would."""
+    the row the two most common colours apart from the outline (tunic and beard) turn into
+    `recolour`. All colours stay inside the theme palette, like drift that survived normalisation would."""
     out = sheet.copy()
     for k in range(1, frames):
         fr = Image.fromarray(C.frame_of(sheet, row, k, fw, fh).copy(), "RGBA")
@@ -61,7 +61,10 @@ def drift_row(sheet: np.ndarray, row: int, frames: int, fw: int = 32, fh: int = 
         a = np.array(canvas)
         if recolour and k >= frames // 2:
             cols, n = np.unique(a[a[..., 3] > 0][:, :3], axis=0, return_counts=True)
-            a[(a[..., :3] == cols[int(np.argmax(n))]).all(-1) & (a[..., 3] > 0), :3] = recolour
+            order = [i for i in np.argsort(-n) if i != int(np.argmin(C.luma(cols)))]
+            src = a.copy()
+            for i, to in zip(order, recolour):
+                a[(src[..., :3] == cols[i]).all(-1) & (src[..., 3] > 0), :3] = to
         out[row * fh:(row + 1) * fh, k * fw:(k + 1) * fw] = a
     return out
 

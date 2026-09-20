@@ -1,57 +1,23 @@
 import AppKit
 import SpriteKit
 
-/// Mirrors Assets/manifest.json. See docs/ART.md for the art contract.
+/// Mirrors Assets/manifest.json: which folder under Assets/themes to use.
 struct Manifest: Decodable {
-    struct Anim: Decodable {
-        let row: Int
-        let frames: Int
-        let fps: Double
-        let looping: Bool
-    }
-
-    struct Character: Decodable {
-        let sheet: String
-        let frame: [Int]
-        let columns: Int
-        let rows: Int
-        /// Bottom-centre of the character in canvas pixels, from bottom-left.
-        let feet: [CGFloat]
-        let animations: [String: Anim]
-    }
-
-    struct Room: Decodable {
-        let id: String
-        let bg: String
-        let fg: String
-    }
-
-    /// A small sprite that shows one vital sign. Its sheet holds `states` frames side by side, left to right.
-    struct Prop: Decodable {
-        let name: String
-        let sheet: String
-        let frame: [Int]
-        let states: Int
-        /// Bottom-left of the prop in canvas pixels, from the canvas bottom-left.
-        let position: [CGFloat]
-        /// Draw order: the background is 0, the character 1, the foreground 2.
-        let z: CGFloat
-    }
-
-    let character: Character
-    let rooms: [Room]
-    /// Optional: a manifest without props, or missing some of them, still gives a working room.
-    let props: [Prop]?
+    let theme: String
 }
 
-/// Loaded once, shared by every window.
+/// The current theme's art. Loaded once, shared by every window.
 final class Art {
-    let manifest: Manifest
-    private let root: URL
-    private var frames: [String: [SKTexture]] = [:]
+    let theme: Theme
+    private let assets: URL
+    /// The current theme's folder; every theme path is relative to it.
+    let root: URL
     private var cache: [String: SKTexture] = [:]
+    private var sheets: [Int: SKTexture] = [:]
+    private var frames: [Int: [String: [SKTexture]]] = [:]
+    private var portraits: [Int: [SKTexture]] = [:]
 
-    init() throws {
+    convenience init() throws {
         // In Nook.app the SwiftPM resource bundle sits in Contents/Resources (scripts/bundle.sh);
         // SwiftPM's own `Bundle.module` only looks beside the executable's bundle root, where
         // code signing forbids it, and then at the absolute build path, which exists only here.
@@ -59,55 +25,147 @@ final class Art {
         guard let dir = (packaged ?? Bundle.module).url(forResource: "Assets", withExtension: nil) else {
             throw NSError(domain: "Nook", code: 1, userInfo: [NSLocalizedDescriptionKey: "Assets folder missing from bundle"])
         }
-        root = dir
-        manifest = try JSONDecoder().decode(Manifest.self, from: Data(contentsOf: dir.appendingPathComponent("manifest.json")))
-
-        let c = manifest.character
-        let sheet = try texture(c.sheet)
-        let (w, h) = (1.0 / CGFloat(c.columns), 1.0 / CGFloat(c.rows))
-        for (name, anim) in c.animations {
-            frames[name] = (0..<anim.frames).map { col in
-                // Texture rects are unit coordinates with a bottom-left origin; rows count from the top.
-                let rect = CGRect(x: CGFloat(col) * w, y: 1.0 - CGFloat(anim.row + 1) * h, width: w, height: h)
-                let t = SKTexture(rect: rect, in: sheet)
-                t.filteringMode = .nearest
-                return t
-            }
-        }
+        try self.init(assets: dir)
     }
 
+    /// `assets` is a folder laid out like Sources/Nook/Assets. If the manifest is missing or names a
+    /// theme that will not load, the first theme that does load is used.
+    init(assets: URL) throws {
+        self.assets = assets
+        let themes = assets.appendingPathComponent("themes")
+        let named = (try? Data(contentsOf: assets.appendingPathComponent("manifest.json")))
+            .flatMap { try? JSONDecoder().decode(Manifest.self, from: $0) }?.theme
+        let others = ((try? FileManager.default.contentsOfDirectory(atPath: themes.path)) ?? []).sorted()
+        let usable = ([named].compactMap { $0 } + others).lazy.compactMap { id -> (Theme, URL)? in
+            let folder = themes.appendingPathComponent(id)
+            guard let data = try? Data(contentsOf: folder.appendingPathComponent("theme.json")),
+                  let theme = try? JSONDecoder().decode(Theme.self, from: data), !theme.scenes.isEmpty else { return nil }
+            return (theme, folder)
+        }.first
+        guard let usable else {
+            throw NSError(domain: "Nook", code: 3, userInfo: [NSLocalizedDescriptionKey: "No usable theme in \(themes.path)"])
+        }
+        (theme, root) = usable
+    }
+
+    // MARK: scenes and avatars
+
+    /// Scenes the user can pick for a window, in menu order. Contract: ids are stable and persisted.
+    var sceneChoices: [(id: String, name: String)] { theme.scenes.map { ($0.id, $0.name) } }
+
+    func scene(_ id: String) -> Theme.Scene? { theme.scenes.first { $0.id == id } }
+
+    /// New agents take scenes round-robin, so a fresh stack looks varied.
+    func scene(at index: Int) -> Theme.Scene { theme.scenes[((index % theme.scenes.count) + theme.scenes.count) % theme.scenes.count] }
+
+    var avatarCount: Int { max(theme.avatars?.count ?? 0, 1) }
+
+    /// The same seed (the agent's folder path) gives the same dwarf on every launch. FNV-1a,
+    /// because `String.hashValue` changes from run to run.
+    func avatarIndex(for seed: String) -> Int {
+        var hash: UInt64 = 0xcbf29ce484222325
+        for byte in seed.utf8 { hash = (hash ^ UInt64(byte)) &* 0x100000001b3 }
+        return Int(hash % UInt64(avatarCount))
+    }
+
+    // MARK: textures
+
+    /// A file of the current theme.
     func texture(_ path: String) throws -> SKTexture {
         if let t = cache[path] { return t }
-        let url = root.appendingPathComponent(path)
-        guard let src = CGImageSourceCreateWithURL(url as CFURL, nil), let image = CGImageSourceCreateImageAtIndex(src, 0, nil) else {
+        guard let image = image(path) else {
             throw NSError(domain: "Nook", code: 2, userInfo: [NSLocalizedDescriptionKey: "Cannot load \(path)"])
         }
-        let t = SKTexture(cgImage: image)
-        t.filteringMode = .nearest
+        let t = Self.pixelTexture(image)
         cache[path] = t
         return t
     }
 
-    /// Where a bundled file lives (fonts and the like).
-    func url(_ path: String) -> URL { root.appendingPathComponent(path) }
+    /// Where a bundled file outside the themes lives (fonts and the like).
+    func url(_ path: String) -> URL { assets.appendingPathComponent(path) }
 
-    /// One texture per state, or nil when the prop is not declared or its sheet will not load.
-    func states(forProp name: String) -> (prop: Manifest.Prop, textures: [SKTexture])? {
-        guard let prop = manifest.props?.first(where: { $0.name == name }), prop.states > 0, prop.frame.count == 2,
-              prop.position.count == 2, let sheet = try? texture(prop.sheet) else { return nil }
-        let w = 1.0 / CGFloat(prop.states)
-        let textures = (0..<prop.states).map { i -> SKTexture in
+    /// `count` equal frames side by side, left to right.
+    func strip(_ sheet: SKTexture, count: Int) -> [SKTexture] {
+        let w = 1.0 / CGFloat(max(count, 1))
+        return (0..<max(count, 0)).map { i in
             let t = SKTexture(rect: CGRect(x: CGFloat(i) * w, y: 0, width: w, height: 1), in: sheet)
             t.filteringMode = .nearest
             return t
         }
-        return (prop, textures)
     }
 
-    /// Scenes the user can pick for a window, in menu order. Contract: ids are stable and persisted.
-    var sceneChoices: [(id: String, name: String)] { [] }
+    /// One texture per state, or nil when the prop is not declared or its sheet will not load.
+    func states(forProp name: String) -> (prop: Theme.Prop, textures: [SKTexture])? {
+        guard let prop = theme.props?.first(where: { $0.name == name }), prop.states > 0, prop.frame.count == 2,
+              prop.position.count == 2, let sheet = try? texture(prop.sheet) else { return nil }
+        return (prop, strip(sheet, count: prop.states))
+    }
 
-    func frames(for animation: String) -> [SKTexture] {
-        frames[animation] ?? frames["idle_breathe"] ?? []
+    /// Frames of an animation for one avatar; an unknown name falls back to breathing.
+    func frames(for animation: String, avatar: Int = 0) -> [SKTexture] {
+        let all = frames[avatar] ?? cut(avatar)
+        return all[animation] ?? all["idle_breathe"] ?? []
+    }
+
+    /// One head per portrait frame for the orb. Without a portrait sheet, the head of the first
+    /// character frame stands in for every state.
+    func portrait(state: AgentState, avatar: Int = 0) -> SKTexture? {
+        let heads = portraits[avatar] ?? cutPortraits(avatar)
+        guard !heads.isEmpty else { return nil }
+        let index = theme.portrait?.states[state.rawValue] ?? 0
+        return heads[min(max(index, 0), heads.count - 1)]
+    }
+
+    private func image(_ path: String) -> CGImage? {
+        guard let src = CGImageSourceCreateWithURL(root.appendingPathComponent(path) as CFURL, nil) else { return nil }
+        return CGImageSourceCreateImageAtIndex(src, 0, nil)
+    }
+
+    private static func pixelTexture(_ image: CGImage) -> SKTexture {
+        let t = SKTexture(cgImage: image)
+        t.filteringMode = .nearest
+        return t
+    }
+
+    /// The file as it is for avatar 0 or an unknown avatar, recoloured otherwise.
+    private func recoloured(_ path: String, avatar: Int) -> SKTexture? {
+        guard let image = image(path) else { return nil }
+        let swap = theme.avatars.flatMap { $0.indices.contains(avatar) ? $0[avatar].swap : nil } ?? [:]
+        return Self.pixelTexture(PaletteSwap.apply(image, table: PaletteSwap.table(swap)) ?? image)
+    }
+
+    private func cut(_ avatar: Int) -> [String: [SKTexture]] {
+        var result: [String: [SKTexture]] = [:]
+        let c = theme.character
+        if let sheet = sheets[avatar] ?? recoloured(c.sheet, avatar: avatar), c.columns > 0, c.rows > 0 {
+            sheets[avatar] = sheet
+            let (w, h) = (1.0 / CGFloat(c.columns), 1.0 / CGFloat(c.rows))
+            for (name, anim) in c.animations where anim.row < c.rows {
+                result[name] = (0..<min(anim.frames, c.columns)).map { col in
+                    // Texture rects are unit coordinates with a bottom-left origin; rows count from the top.
+                    let t = SKTexture(rect: CGRect(x: CGFloat(col) * w, y: 1.0 - CGFloat(anim.row + 1) * h, width: w, height: h), in: sheet)
+                    t.filteringMode = .nearest
+                    return t
+                }
+            }
+        }
+        frames[avatar] = result
+        return result
+    }
+
+    private func cutPortraits(_ avatar: Int) -> [SKTexture] {
+        var heads: [SKTexture] = []
+        if let p = theme.portrait, let sheet = recoloured(p.sheet, avatar: avatar) {
+            heads = strip(sheet, count: max((p.states.values.max() ?? 0) + 1, 1))
+        } else if let sheet = sheets[avatar] ?? recoloured(theme.character.sheet, avatar: avatar) {
+            // Top of the first frame of row 0: the head, roughly.
+            let c = theme.character
+            let (w, h) = (1.0 / CGFloat(max(c.columns, 1)), 1.0 / CGFloat(max(c.rows, 1)))
+            let head = SKTexture(rect: CGRect(x: w * 0.19, y: 1 - h * 0.69, width: w * 0.62, height: h * 0.62), in: sheet)
+            head.filteringMode = .nearest
+            heads = [head]
+        }
+        portraits[avatar] = heads
+        return heads
     }
 }

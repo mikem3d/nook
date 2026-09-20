@@ -4,6 +4,11 @@
   sheet.py split    strip.png --anim idle_sip -o frames/idle_sip/
   sheet.py assemble strips/ -o set/character/sheet.png [--fill-from old_sheet.png]
   sheet.py validate --assets set/ --palette sweetie16        # exit code 1 on any error
+  sheet.py validate                                          # the installed theme, against its own palette
+
+`validate` checks the whole theme layout (docs/ART.md): character sheet, portrait, scenes, props,
+ambient strips, the frame and its connectors (including that they line up across a seam), the orb,
+avatar swaps, and the shared palette. Without --palette it uses the palette in theme.json.
 
 `assemble` reads, per animation in the manifest, either strips/<anim>.png (a
 normalised strip, frames*32 x 32) or strips/<anim>/*.png (single 32x32 frames,
@@ -21,8 +26,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import common as C  # noqa: E402
 
-HEADER_ROWS = 11      # docs/ART.md: the header bar covers the top 11 px
-DESK_TOP = 70         # docs/ART.md: desk top edge at y=70 from the top
+HEADER_ROWS = 11      # docs/ART.md: the header lintel covers the top 11 px
 MIN_FRAME_PIXELS = 20
 
 
@@ -222,24 +226,116 @@ def validate_room(rep: Report, room: dict, root: Path, man: dict, pal_set):
             elif not op.any():
                 rep.warn(where, "empty", "foreground is empty")
             else:
-                fx, fy = man["character"]["feet"]
-                cols = op[:, max(0, fx - 16):fx + 16]
-                rows = np.nonzero(cols.mean(1) > 0.9)[0]
-                if len(rows) == 0:
-                    rep.warn(where, "desk", "nothing solid in front of the character; the desk should hide the legs")
-                elif abs(int(rows.min()) - DESK_TOP) > 2:
-                    rep.warn(where, "desk", f"desk top edge in front of the character is at y={int(rows.min())}, the contract says y={DESK_TOP}")
+                fx, fy = (int(v) for v in room.get("feet", man["character"]["feet"]))
+                cols = op[ch_ - fy - 16:ch_ - fy, max(0, fx - 16):fx + 16]
+                if not (cols.mean(1) > 0.9).any():
+                    rep.warn(where, "bench", "nothing solid in front of the character; a bench should hide the boots")
+
+
+def _sized(rep, root, rel, want, pal_set, what) -> np.ndarray | None:
+    """Loads root/rel if present and checks size (w, h), alpha and palette."""
+    if not rel or not (root / rel).exists():
+        return None
+    a = C.load_rgba(root / rel)
+    if want and a.shape[:2] != (want[1], want[0]):
+        rep.error(rel, "size", f"is {a.shape[1]}x{a.shape[0]}, expected {want[0]}x{want[1]} ({what})")
+        return None
+    _check_alpha(rep, rel, a)
+    _check_palette(rep, rel, a, pal_set)
+    return a
+
+
+def validate_theme(rep: Report, root: Path, man: dict, pal_set):
+    """Everything beyond the sheet and the scene layers: portrait, props, ambient, frame, orb, avatars."""
+    cw, ch_ = man["canvas"]
+    p = man.get("portrait")
+    if p:
+        n = max(p["states"].values()) + 1
+        a = _sized(rep, root, p["sheet"], (p["frame"][0] * n, p["frame"][1]), pal_set, f"{n} heads of {p['frame'][0]}x{p['frame'][1]}")
+        if a is not None:
+            for state, i in p["states"].items():
+                if not (a[:, i * p["frame"][0]:(i + 1) * p["frame"][0], 3] > 0).any():
+                    rep.error(p["sheet"], "empty-frame", f"portrait frame {i} ({state}) is empty")
+    for prop in man.get("props") or []:
+        w, h = prop["frame"]
+        _sized(rep, root, prop["sheet"], (w * prop["states"], h), pal_set, f"{prop['states']} states of {w}x{h}")
+    names = {prop["name"] for prop in man.get("props") or []}
+    for scene in man["scenes"]:
+        for place in scene.get("props") or []:
+            if place["name"] not in names:
+                rep.error(scene["id"], "prop", f"places '{place['name']}', which the theme does not declare")
+        for amb in scene.get("ambient") or []:
+            w, h = amb["frame"]
+            _sized(rep, root, amb["sheet"], (w * amb["frames"], h), pal_set, f"{amb['frames']} frames of {w}x{h}")
+            if amb["fps"] > 6:
+                rep.error(amb["sheet"], "fps", f"ambient fps {amb['fps']} > 6 would raise the window's frame rate")
+        for default, other in (scene.get("animations") or {}).items():
+            if other not in man["character"]["animations"]:
+                rep.error(scene["id"], "animation", f"replaces '{default}' with '{other}', which the character sheet does not have")
+
+    frame = man.get("frame") or {}
+    _sized(rep, root, frame.get("overlay"), (cw, ch_), pal_set, "the canvas")
+    pieces = {}
+    for edge, con in (frame.get("connectors") or {}).items():
+        for kind in ("open", "sealed"):
+            piece = con.get(kind)
+            if piece:
+                a = _sized(rep, root, piece["sprite"], None, pal_set, "")
+                if a is not None:
+                    pieces[edge, kind] = (a, piece["position"])
+    # Seams: windows abut with no gap and any scene meets any other, so the open pieces must agree.
+    if ("top", "open") in pieces and ("bottom", "open") in pieces:
+        (up, up_pos), (down, down_pos) = pieces["top", "open"], pieces["bottom", "open"]
+        if up_pos[0] != down_pos[0] or up.shape[1] != down.shape[1]:
+            rep.error("connectors", "seam", f"ladder shaft differs: top x={up_pos[0]} w={up.shape[1]}, bottom x={down_pos[0]} w={down.shape[1]}")
+        elif up_pos[1] + up.shape[0] != ch_ or down_pos[1] != 0:
+            rep.error("connectors", "seam", "the top piece must reach the top edge and the bottom piece the bottom edge")
+        elif not (up[0] == down[-1]).all():
+            rep.error("connectors", "seam", "top row of the top piece differs from the bottom row of the bottom piece")
+    if ("left", "open") in pieces and ("right", "open") in pieces:
+        (west, west_pos), (east, east_pos) = pieces["left", "open"], pieces["right", "open"]
+        if west_pos[1] != east_pos[1] or west.shape[0] != east.shape[0]:
+            rep.error("connectors", "seam", f"tunnel mouth differs: left y={west_pos[1]} h={west.shape[0]}, right y={east_pos[1]} h={east.shape[0]}")
+        elif west_pos[0] != 0 or east_pos[0] + east.shape[1] != cw:
+            rep.error("connectors", "seam", "the left piece must start at x=0 and the right piece end at the right edge")
+        elif not (west[:, 0] == east[:, -1]).all():
+            rep.error("connectors", "seam", "outer column of the left piece differs from the outer column of the right piece")
+
+    orb = man.get("orb") or {}
+    size = orb.get("size", 28)
+    for key in ("back", "ring", "alert"):
+        a = _sized(rep, root, orb.get(key), (size, size), pal_set, "the orb")
+        if a is not None:
+            yy, xx = np.mgrid[0:size, 0:size]
+            outside = (xx + 0.5 - size / 2) ** 2 + (yy + 0.5 - size / 2) ** 2 > (size / 2) ** 2
+            if (a[..., 3][outside] > 0).any():
+                rep.error(orb[key], "circle", "has pixels outside the inscribed circle; an orb window has no other shape")
+    if orb.get("gem"):
+        _sized(rep, root, orb["gem"]["sprite"], None, pal_set, "")
+    if orb.get("work"):
+        w, h = orb["work"]["frame"]
+        _sized(rep, root, orb["work"]["sheet"], (w * orb["work"]["frames"], h), pal_set, f"{orb['work']['frames']} frames of {w}x{h}")
+
+    sheet_path = root / man["character"]["sheet"]
+    used = _colours(C.load_rgba(sheet_path)) if sheet_path.exists() else None
+    for avatar in man.get("avatars") or []:
+        for src, dst in avatar["swap"].items():
+            s_rgb, d_rgb = C.parse_hex(src), C.parse_hex(dst)
+            if used is not None and s_rgb not in used:
+                rep.warn(avatar["id"], "swap", f"swaps #{src}, which the character sheet does not use")
+            if pal_set is not None and d_rgb not in pal_set:
+                rep.error(avatar["id"], "swap", f"swaps to #{dst}, which is not in the palette")
 
 
 def validate_set(root: Path, man: dict, palette: str | None, complete=False, centre_tol=1.5, drift_tol=1.0) -> Report:
     rep = Report()
     pal_set = None
-    if palette:
-        pal = C.load_palette(palette)
+    pal = C.load_palette(palette) if palette else C.theme_palette(man)
+    if pal is not None:
         pal_set = {tuple(int(v) for v in c) for c in pal}
         if len(pal_set) > C.MAX_COLOURS:
-            rep.error(palette, "palette-size", f"palette has {len(pal_set)} colours, the contract allows at most {C.MAX_COLOURS}")
-    files = [man["character"]["sheet"]] + [r[k] for r in man["rooms"] for k in ("bg", "fg")]
+            rep.error(palette or "theme.json", "palette-size", f"palette has {len(pal_set)} colours, the contract allows at most {C.MAX_COLOURS}")
+    files = C.asset_files(man)
     present = [f for f in files if (root / f).exists()]
     for f in files:
         if f not in present:
@@ -251,6 +347,7 @@ def validate_set(root: Path, man: dict, palette: str | None, complete=False, cen
         validate_sheet(rep, root / man["character"]["sheet"], man, pal_set, centre_tol, drift_tol)
     for room in man["rooms"]:
         validate_room(rep, room, root, man, pal_set)
+    validate_theme(rep, root, man, pal_set)
     allc = set()
     for f in present:
         allc |= _colours(C.load_rgba(root / f))

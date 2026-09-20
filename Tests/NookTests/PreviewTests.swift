@@ -3,72 +3,82 @@ import SpriteKit
 import Metal
 @testable import Nook
 
-/// Renders the real RoomScene offscreen so the room can be checked without launching the app:
+/// Renders the real RoomScene offscreen so the theme can be judged without launching the app:
 ///   NOOK_PREVIEW=/some/folder swift test --filter PreviewTests
+/// Writes every scene, stacked and side-by-side pairs with their connectors open, a sealed chamber,
+/// a dimmed one, and the orb in every state, at 1x, 1.5x and 2x.
 final class PreviewTests: XCTestCase {
-    func testRenderRooms() throws {
+    private static let long = "The configurator pricing table is out of date. Want me to refresh it? I can also regenerate the PDF, update the changelog and open a pull request once the tests are green."
+
+    func testRenderTheme() throws {
         guard let folder = ProcessInfo.processInfo.environment["NOOK_PREVIEW"] else { throw XCTSkip("set NOOK_PREVIEW to a folder") }
-        guard let device = MTLCreateSystemDefaultDevice(), let queue = device.makeCommandQueue() else { throw XCTSkip("no Metal device") }
+        let out = URL(fileURLWithPath: folder)
+        try FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
+        let renderer = try OffscreenRenderer()
         let art = try Art()
         PixelFont.register(art.url("fonts/DepartureMono-Regular.otf"))
         XCTAssertTrue(PixelFont.shared.pixelated, "the bundled font registered")
 
-        let long = "The configurator pricing table is out of date. Want me to refresh it? I can also regenerate the PDF, update the changelog and open a pull request once the tests are green."
-        let cases: [(String, CGFloat, String, Double, Double, Int, Date?, Int)] = [
-            ("2x-talking", 2, long, 0.62, 1.8, 3, Date().addingTimeInterval(-42), 2),
-            ("2x-full", 2, "Allow Bash? rm -rf build/", 0.93, 25, 9, Date().addingTimeInterval(-400), 120),
-            ("1.5x-talking", 1.5, long, 0.3, 0.2, 1, nil, 0),
-            ("1x-idle", 1, "", 0, 0, 0, nil, 7),
-        ]
-        for (index, (name, s, text, context, cost, files, started, unread)) in cases.enumerated() {
-            let scene = RoomScene(art: art, roomIndex: index, title: index == 1 ? "a-very-long-project-folder-name-indeed" : "zipdemand")
+        func chamber(_ index: Int, _ scale: CGFloat, edges: Set<RoomScene.Edge> = [], state: AgentState = .working, bubble: String = "",
+                     unread: Int = 0, folder: String? = nil, context: Double = 0.4, started: Date? = Date().addingTimeInterval(-3)) -> RoomScene {
+            let scene = RoomScene(art: art, roomIndex: index, title: folder ?? art.scene(at: index).id, avatarSeed: folder)
             scene.scaleMode = .fill // resizeFill needs a view; offscreen it collapses the scene to nothing
-            scene.size = CGSize(width: RoomScene.W * s, height: RoomScene.H * s)
-            scene.configure(scale: s, minimised: false)
-            scene.show(state: text.isEmpty ? .idle : .talking, bubble: text, unread: unread)
-            scene.showVitals(contextFraction: context, cost: cost, changedFiles: files, turnStarted: started)
-
-            let renderer = SKRenderer(device: device)
-            renderer.scene = scene
-            let (w, h) = (Int(scene.size.width * 2), Int(scene.size.height * 2)) // Retina pixels
-            let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .bgra8Unorm, width: w, height: h, mipmapped: false)
-            descriptor.usage = [.renderTarget, .shaderRead]
-            descriptor.storageMode = .shared
-            let target = try XCTUnwrap(device.makeTexture(descriptor: descriptor))
-            let pass = MTLRenderPassDescriptor()
-            pass.colorAttachments[0].texture = target
-            pass.colorAttachments[0].loadAction = .clear
-            pass.colorAttachments[0].storeAction = .store
-            // Two seconds of frames: long enough for the typewriter to finish the first page.
-            let start = CACurrentMediaTime() + 1 // SKRenderer ignores times earlier than the one it was created at
-            for frame in 0...(name == "1.5x-talking" ? 100 : 30) { renderer.update(atTime: start + Double(frame) / 15) }
-            // The first pass only uploads textures; the second one draws them.
-            var buffer = try XCTUnwrap(queue.makeCommandBuffer())
-            for _ in 0..<2 {
-                buffer = try XCTUnwrap(queue.makeCommandBuffer())
-                renderer.render(withViewport: CGRect(x: 0, y: 0, width: w, height: h), commandBuffer: buffer, renderPassDescriptor: pass)
-                buffer.commit()
-                buffer.waitUntilCompleted()
-            }
-
-            XCTAssertNil(buffer.error)
-            if ProcessInfo.processInfo.environment["NOOK_DUMP"] != nil {
-                for node in scene.children.last?.children ?? [] {
-                    print(name, node.frame, node.isHidden, node.zPosition, (node as? SKSpriteNode)?.anchorPoint as Any, (node as? SKSpriteNode)?.texture?.size() as Any)
-                }
-            }
-            var bytes = [UInt8](repeating: 0, count: w * h * 4)
-            target.getBytes(&bytes, bytesPerRow: w * 4, from: MTLRegionMake2D(0, 0, w, h), mipmapLevel: 0)
-            XCTAssertTrue(bytes.contains { $0 != 0 && $0 != 255 }, "something was drawn")
-            let provider = try XCTUnwrap(CGDataProvider(data: Data(bytes) as CFData))
-            let image = try XCTUnwrap(CGImage(width: w, height: h, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: w * 4,
-                                              space: CGColorSpace(name: CGColorSpace.sRGB)!,
-                                              bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue),
-                                              provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent))
-            let url = URL(fileURLWithPath: folder).appendingPathComponent("\(name).png")
-            let destination = try XCTUnwrap(CGImageDestinationCreateWithURL(url as CFURL, "public.png" as CFString, 1, nil))
-            CGImageDestinationAddImage(destination, image, nil)
-            XCTAssertTrue(CGImageDestinationFinalize(destination))
+            scene.size = CGSize(width: RoomScene.W * scale, height: RoomScene.H * scale)
+            scene.configure(scale: scale, minimised: false)
+            scene.setNeighbours(edges)
+            scene.show(state: state, bubble: bubble, unread: unread)
+            scene.showVitals(contextFraction: context, cost: 1.8, changedFiles: 3, turnStarted: started)
+            return scene
         }
+
+        // Every scene on its own, sealed, with a different dwarf in each.
+        for (index, choice) in art.sceneChoices.enumerated() {
+            let scene = chamber(index, 2, folder: "/Users/someone/work/project-\(index)")
+            try renderer.write(renderer.image(of: scene, seconds: 1.4), to: out.appendingPathComponent("scene-\(choice.id)-2x.png"))
+        }
+
+        for scale in [1, 1.5, 2] as [CGFloat] {
+            let tag = "\(scale)x".replacingOccurrences(of: ".0x", with: "x")
+            // A stack of three: ladders line up through the seams.
+            let column = [chamber(0, scale, edges: [.bottom], state: .talking, bubble: Self.long, unread: 2, folder: "/a"),
+                          chamber(1, scale, edges: [.top, .bottom], folder: "/b"),
+                          chamber(4, scale, edges: [.top], state: .thinking, folder: "/c")]
+            try renderer.write(renderer.stitch(column.map { try renderer.image(of: $0, seconds: 2) }, vertical: true),
+                               to: out.appendingPathComponent("stack-vertical-\(tag).png"))
+            // A row of two: the tunnel lines up.
+            let row = [chamber(3, scale, edges: [.right], state: .idle, folder: "/d"),
+                       chamber(5, scale, edges: [.left], state: .alert, bubble: "Allow Bash? rm -rf build/", unread: 120, folder: "/e", context: 0.93,
+                               started: Date().addingTimeInterval(-400))]
+            try renderer.write(renderer.stitch(row.map { try renderer.image(of: $0, seconds: 2) }, vertical: false),
+                               to: out.appendingPathComponent("stack-horizontal-\(tag).png"))
+
+            let sealed = chamber(6, scale, state: .sleeping, folder: "a-very-long-project-folder-name-indeed", started: nil)
+            sealed.setDimmed(true)
+            try renderer.write(renderer.image(of: sealed, seconds: 1), to: out.appendingPathComponent("sealed-dimmed-\(tag).png"))
+
+            // The orb in every state, side by side; the last two carry an unread badge.
+            let states: [AgentState] = [.idle, .thinking, .working, .talking, .alert, .done, .sleeping]
+            let orbs = try states.enumerated().map { index, state -> CGImage in
+                let scene = RoomScene(art: art, roomIndex: index, title: "orb", avatarSeed: "/agents/\(index)")
+                scene.scaleMode = .fill
+                scene.size = CGSize(width: RoomScene.orb * scale, height: RoomScene.orb * scale)
+                scene.configure(scale: scale, minimised: true)
+                scene.show(state: state, bubble: "hidden in an orb", unread: index == 4 ? 3 : (index == 6 ? 12 : 0))
+                let image = try renderer.image(of: scene, seconds: 0.2)
+                if index == 0 {
+                    XCTAssertEqual(OffscreenRenderer.alpha(of: image, x: 0, y: 0), 0, "outside the circle is transparent")
+                    XCTAssertEqual(OffscreenRenderer.alpha(of: image, x: image.width / 2, y: image.height / 2), 255)
+                }
+                return image
+            }
+            try renderer.write(renderer.stitch(orbs, vertical: false, gap: 8), to: out.appendingPathComponent("orbs-\(tag).png"))
+        }
+
+        // Halfway through a scene change.
+        let switching = chamber(0, 2, folder: "/a")
+        _ = try renderer.image(of: switching, seconds: 0.5)
+        switching.setScene("treasury")
+        XCTAssertEqual(switching.sceneID, "treasury")
+        try renderer.write(renderer.image(of: switching, seconds: 0.12), to: out.appendingPathComponent("scene-switch-midway-2x.png"))
     }
 }

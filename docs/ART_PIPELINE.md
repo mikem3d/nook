@@ -25,14 +25,14 @@ see it. Regenerate what fails.
 | Tool | Does |
 |---|---|
 | `normalize.py MODE in.png -o out.png` | Detect the fake-pixel grid, take one colour per cell, quantise to the palette, binary alpha, clean specks, optional outline, fit to contract size. Modes: `room-bg`, `room-fg`, `character-frame`, `character-strip`, `prop`. |
-| `sheet.py split / assemble / validate` | Cut strips into frames, build `character/sheet.png` from per-animation strips, check a set against `manifest.json`. Exit code 1 on any error. |
+| `sheet.py split / assemble / validate` | Cut strips into frames, build `character/sheet.png` from per-animation strips, check a set against the theme (`theme.json`): sheet, scenes, props, frame and connector seams, orb, palette. Exit code 1 on any error. |
 | `consistency.py sheet.png` | Frame-to-frame drift metrics per row, flags, JSON report. Exit code 1 if any row is flagged. |
-| `preview.py --assets set/ -o out/` | Labelled 4x contact sheet, one GIF per animation at manifest fps, room composites (still and animated). |
-| `install.py set/` | Validates, then copies into `Sources/Nook/Assets` with a backup. **Dry run unless `--apply`.** Never touches `manifest.json`. |
+| `preview.py --assets set/ -o out/` | Labelled 4x contact sheet, one GIF per animation at manifest fps, scene composites (still and animated), stacked chambers with open connectors, the orbs. |
+| `install.py set/` | Validates, then copies into `Sources/Nook/Assets` with a backup. **Dry run unless `--apply`.** Never touches `manifest.json` or `theme.json`. |
 | `palette.py list / extract / swatch` | List bundled palettes, derive one from reference images (median cut), render a swatch. |
 | `tests/run_tests.py` | End-to-end tests on synthetic "AI-like" input. |
 
-All tools take `--help`. All read the manifest from `Sources/Nook/Assets/manifest.json`
+All tools take `--help`. All read the current theme through `Sources/Nook/Assets/manifest.json` (which names `themes/<id>/theme.json`; every set path below starts with `themes/<id>/`)
 unless `--manifest` is given, so adding an animation row there is picked up automatically.
 
 ### How normalize.py works, and its knobs
@@ -96,16 +96,16 @@ python3 $T/normalize.py character-strip raw/idle_sip.png -o work/strips/idle_sip
 #    ... repeat for all 11 animations ...
 
 # 3. Sheet. --fill-from keeps rows you have not replaced yet.
-python3 $T/sheet.py assemble work/strips -o set/character/sheet.png \
-        --fill-from Sources/Nook/Assets/character/sheet.png
+python3 $T/sheet.py assemble work/strips -o set/themes/dwarf-mine/character/sheet.png \
+        --fill-from Sources/Nook/Assets/themes/dwarf-mine/character/sheet.png
 
 # 4. Rooms
-python3 $T/normalize.py room-bg raw/study_bg.png -o set/rooms/study_bg.png --palette $PAL
-python3 $T/normalize.py room-fg raw/study_fg.png -o set/rooms/study_fg.png --palette $PAL
+python3 $T/normalize.py room-bg raw/forge_bg.png -o set/themes/dwarf-mine/scenes/forge/bg.png --palette $PAL
+python3 $T/normalize.py room-fg raw/forge_fg.png -o set/themes/dwarf-mine/scenes/forge/fg.png --palette $PAL
 
 # 5. Gates (both exit non-zero on failure)
 python3 $T/sheet.py validate --assets set --palette $PAL
-python3 $T/consistency.py set/character/sheet.png --json work/consistency.json
+python3 $T/consistency.py set/themes/dwarf-mine/character/sheet.png --json work/consistency.json
 
 # 6. Look at it
 python3 $T/preview.py --assets set -o work/preview
@@ -118,8 +118,8 @@ python3 $T/install.py set --palette $PAL --apply
 Foreground layers: generating a room and its foreground separately rarely lines up. The
 reliable route is to generate ONE full room image, normalise it as `room-bg`, then make the
 foreground by erasing everything except the desk and props in a pixel editor (or generate the
-desk alone on magenta and normalise with `room-fg`). `validate` warns if the desk top in
-front of the character is not at y=70.
+desk alone on magenta and normalise with `room-fg`). `validate` warns if nothing solid
+stands in front of the character's boots (the bench top is at row 84, see docs/ART.md).
 
 ## Prompt templates
 
@@ -245,8 +245,8 @@ Per asset set, before `install.py --apply`:
       at most 1 px in a row, binary alpha, every pixel in the palette, at most 32 colours
       across the set, rooms 192x108, backgrounds fully opaque, foregrounds transparent.
 - [ ] Validate warnings read and accepted or fixed: outline coverage, frames touching the
-      frame edge, busy header strip (top 11 px), busy upper right (speech bubble), desk top
-      not at y=70.
+      frame edge, busy header strip (top 11 px), busy upper right (speech bubble), no bench
+      in front of the character, connector seams that do not line up, orb art outside the circle.
 - [ ] `consistency.py` exits 0, or every flagged row was looked at and is legitimate motion
       (then record the `--set key=value` override you used).
 - [ ] No normalize warning about "off-grid" or "weak pixel grid" on character art.
@@ -305,8 +305,9 @@ every file at least 99.5% pixel-identical to the source (residual errors are bet
 near-identical dark colours in the test palette); the assembled set passes `validate`; eight
 kinds of broken sheet are each rejected with the right message; clean rows pass `consistency`
 and size, position and colour drift are each flagged; outline, orphan, prop, split, preview
-and install (dry run, apply, backup, restore, refusal) behave. It also shows the current
-placeholders do **not** meet the contract's palette rule: 48 colours across the set.
+and install (dry run, apply, backup, restore, refusal) behave. The installed placeholder
+theme itself passes `validate` against its own 28-colour palette, and a ladder that misses the
+seam or orb art outside the circle is rejected.
 
 Unproven until real generations are tried: grid detection on real model output (uneven or
 warped fake pixels, inconsistent pixel size inside one image, painterly "pixel art" with no

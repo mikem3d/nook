@@ -67,11 +67,11 @@ def main() -> int:
     pal = C.load_palette(str(PAL))
     check("palette auto (median cut) over all placeholders -> <= 32 colours", r.returncode == 0 and len(pal) <= 32, f"{len(pal)} colours")
 
-    # reference = placeholders snapped to the shared palette (placeholders use 48 colours, the contract allows 32)
+    # reference = placeholders snapped to the extracted palette (a no-op while they stay within 32 colours)
     ref = {f: C.index_to_rgba(C.rgba_to_index(C.load_rgba(C.ASSETS / f), pal), pal) for f in files}
 
     # ---- 2. grid detection
-    bg = C.load_rgba(C.ASSETS / "rooms/study_bg.png")
+    bg = C.load_rgba(C.ASSETS / man["rooms"][0]["bg"])
     strip = C.load_rgba(C.ASSETS / files[0])[fh:2 * fh, :6 * fw]
     errs = []
     for f in (3, 4, 5.5, 7.3, 8, 10.67, 13.5, 16, 20):
@@ -88,7 +88,7 @@ def main() -> int:
     for i, room in enumerate(man["rooms"]):
         for layer, mode in (("bg", "room-bg"), ("fg", "room-fg")):
             rel = room[layer]
-            src = raw / (Path(rel).stem + ".png")
+            src = raw / f"{room['id']}_{layer}.png"
             C.save_rgba(synth.degrade(ref[rel], factors[i % 3], seed=i), src)
             r = run("normalize.py", mode, src, "-o", cand / rel, "--palette", PAL)
             if r.returncode:
@@ -103,16 +103,32 @@ def main() -> int:
         if r.returncode:
             print(r.stdout, r.stderr)
     r = run("sheet.py", "assemble", OUT / "strips", "-o", cand / files[0])
-    check("sheet.py assemble builds the sheet from 11 normalised strips", r.returncode == 0, r.stdout.strip().splitlines()[-1] if r.stdout else r.stderr)
+    check(f"sheet.py assemble builds the sheet from {len(man['character']['animations'])} normalised strips", r.returncode == 0, r.stdout.strip().splitlines()[-1] if r.stdout else r.stderr)
     worst[files[0]] = same(C.load_rgba(cand / files[0]), ref[files[0]])
-    detail = ", ".join(f"{Path(k).stem} {v:.2%}" for k, v in worst.items())
+    detail = ", ".join(f"{'/'.join(Path(k).parts[-2:])} {v:.2%}" for k, v in worst.items())
     check("round trip reproduces the source art (>= 99.5% of pixels per file, sheet >= 99.9%)",
           min(worst.values()) >= 0.995 and worst[files[0]] >= 0.999, detail)
-    r = run("sheet.py", "validate", "--assets", cand, "--palette", PAL, "--complete", "--json", OUT / "validate.json")
+    for f in C.asset_files(man):            # the rest of the theme rides along untouched
+        if not (cand / f).exists():
+            (cand / f).parent.mkdir(parents=True, exist_ok=True); shutil.copy(C.ASSETS / f, cand / f)
+    r = run("sheet.py", "validate", "--assets", cand, "--complete", "--json", OUT / "validate.json")
     check("sheet.py validate passes the round-tripped set", r.returncode == 0, r.stdout.strip().splitlines()[-1])
-    r = run("sheet.py", "validate")
-    check("sheet.py validate fails the raw placeholders (48 colours > 32), exit code 1",
-          r.returncode == 1 and "colour-count" in r.stdout, r.stdout.strip().splitlines()[-1])
+    r = run("sheet.py", "validate", "--complete")
+    check("sheet.py validate passes the installed theme against its own palette (<= 32 colours, seams line up)",
+          r.returncode == 0 and "0 errors" in r.stdout, r.stdout.strip().splitlines()[-1])
+    theme_files = C.asset_files(man)
+    seam = OUT / "bad_seam"
+    for f in theme_files:
+        (seam / f).parent.mkdir(parents=True, exist_ok=True); shutil.copy(C.ASSETS / f, seam / f)
+    piece = man["frame"]["connectors"]["bottom"]["open"]["sprite"]
+    a = C.load_rgba(seam / piece); a[-1, 2:4] = a[-1, 5]; C.save_rgba(a, seam / piece)
+    r = run("sheet.py", "validate", "--assets", seam)
+    check("validate rejects: a ladder that does not line up across the seam", r.returncode == 1 and "[seam]" in r.stdout,
+          next((l.strip() for l in r.stdout.splitlines() if "[seam]" in l), "")[:150])
+    ring = man["orb"]["ring"]
+    a = C.load_rgba(seam / ring); a[0, 0] = a[14, 1]; C.save_rgba(a, seam / ring)
+    r = run("sheet.py", "validate", "--assets", seam)
+    check("validate rejects: orb art outside the circle", r.returncode == 1 and "[circle]" in r.stdout)
 
     # ---- 4. validation catches broken sheets
     good = C.load_rgba(cand / files[0])
@@ -179,10 +195,11 @@ def main() -> int:
     r = run("sheet.py", "split", OUT / "strips" / "idle_sip.png", "--anim", "idle_sip", "-o", OUT / "frames" / "idle_sip")
     fr_files = sorted((OUT / "frames" / "idle_sip").glob("*.png"))
     check("sheet.py split cuts a strip into manifest frame count", len(fr_files) == 6 and all(Image.open(f).size == (fw, fh) for f in fr_files), f"{len(fr_files)} frames")
-    r = run("normalize.py", "room-bg", raw / "study_bg.png", "-o", OUT / "auto_bg.png", "--palette", "auto", "--colours", "16")
+    first_bg = raw / f"{man['rooms'][0]['id']}_bg.png"
+    r = run("normalize.py", "room-bg", first_bg, "-o", OUT / "auto_bg.png", "--palette", "auto", "--colours", "16")
     ncol = len(np.unique(C.load_rgba(OUT / "auto_bg.png")[..., :3].reshape(-1, 3), axis=0))
     check("--palette auto without a reference derives <= N colours from the input", r.returncode == 0 and ncol <= 16, f"{ncol} colours")
-    r = run("normalize.py", "room-bg", raw / "study_bg.png", "-o", OUT / "pico_bg.png", "--palette", "pico8")
+    r = run("normalize.py", "room-bg", first_bg, "-o", OUT / "pico_bg.png", "--palette", "pico8")
     check("named palette (pico8) output is palette compliant", set(map(tuple, np.unique(C.load_rgba(OUT / "pico_bg.png")[..., :3].reshape(-1, 3), axis=0)))
           <= set(map(tuple, C.load_palette("pico8"))))
 
@@ -198,29 +215,36 @@ def main() -> int:
     fps_ok = all(abs(durs[n] - 1000 * s["frames"] / s["fps"]) <= 10 * s["frames"] for n, s in man["character"]["animations"].items())
     comps = list((OUT / "preview").glob("composite_*"))
     cs = Image.open(OUT / "preview" / "contact_sheet.png")
-    check("preview.py writes contact sheet, 11 GIFs at manifest fps, room composites",
-          r.returncode == 0 and len(gifs) == 11 and fps_ok and len(comps) == 9 and cs.width >= 8 * fw * 4,
+    n_anims, n_rooms = len(man["character"]["animations"]), len(man["rooms"])
+    check("preview.py writes contact sheet, one GIF per animation at manifest fps, scene composites",
+          r.returncode == 0 and len(gifs) == n_anims and fps_ok and len(comps) == 3 * n_rooms and cs.width >= 8 * fw * 4,
           f"{len(gifs)} gifs, {len(comps)} composites, contact sheet {cs.width}x{cs.height}")
+    r = run("preview.py", "-o", OUT / "preview_theme")
+    stack = OUT / "preview_theme" / "stack_vertical.png"
+    cw, ch_ = man["canvas"]
+    check("preview.py composites stacked chambers with open connectors, and the orbs",
+          r.returncode == 0 and stack.exists() and Image.open(stack).size == (cw * 4, ch_ * 3 * 4)
+          and all((OUT / "preview_theme" / n).exists() for n in ("stack_horizontal.png", "stack_mountain.png", "orbs.png")))
 
     # ---- 8. install (against a COPY of the assets folder)
     dest = OUT / "fake_assets"
     shutil.copytree(C.ASSETS, dest)
     before = tree_hash(dest)
-    r = run("install.py", cand, "--dest", dest, "--palette", PAL, "--backup-dir", OUT / "backups")
+    r = run("install.py", cand, "--dest", dest, "--backup-dir", OUT / "backups")
     check("install.py is a dry run by default and changes nothing", r.returncode == 0 and tree_hash(dest) == before and "dry run" in r.stdout, r.stdout.strip().splitlines()[-1])
-    r = run("install.py", cand, "--dest", dest, "--palette", PAL, "--backup-dir", OUT / "backups", "--apply")
+    r = run("install.py", cand, "--dest", dest, "--backup-dir", OUT / "backups", "--apply")
     installed = all((dest / f).read_bytes() == (cand / f).read_bytes() for f in files)
     backups = list((OUT / "backups").glob("*/"))
     backed = bool(backups) and all((backups[0] / f).read_bytes() == (C.ASSETS / f).read_bytes() for f in files)
-    check("install.py --apply copies 7 files and backs up the originals", r.returncode == 0 and installed and backed, r.stdout.strip().splitlines()[-1][:120])
+    check(f"install.py --apply copies {len(files)} files and backs up the originals", r.returncode == 0 and installed and backed, r.stdout.strip().splitlines()[-1][:120])
     r = run("install.py", "--restore", backups[0], "--dest", dest, "--apply")
     check("install.py --restore puts the originals back", tree_hash(dest) == before)
     bad = OUT / "bad_set"
     shutil.copytree(cand, bad); C.save_rgba(shift(good.copy(), 1, 2, 0, -2), bad / files[0])
-    r = run("install.py", bad, "--dest", dest, "--palette", PAL, "--apply")
+    r = run("install.py", bad, "--dest", dest, "--apply")
     check("install.py refuses a set that fails validation", r.returncode == 1 and tree_hash(dest) == before and "REFUSED" in r.stdout)
     shutil.rmtree(bad); shutil.copytree(cand, bad); shutil.copy(drift, bad / files[0])
-    r = run("install.py", bad, "--dest", dest, "--palette", PAL, "--apply")
+    r = run("install.py", bad, "--dest", dest, "--apply")
     check("install.py refuses a set whose sheet drifts", r.returncode == 1 and tree_hash(dest) == before and "REFUSED" in r.stdout)
 
     check("the real Sources/Nook/Assets folder was not modified", tree_hash(C.ASSETS) == assets_before)

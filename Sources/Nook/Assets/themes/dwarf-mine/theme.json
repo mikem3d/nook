@@ -1,0 +1,1136 @@
+{
+  "id": "dwarf-mine",
+  "name": "Dwarf Mine",
+  "canvas": [
+    192,
+    108
+  ],
+  "palette": [
+    "1a1a29",
+    "2b2a3a",
+    "44425a",
+    "63607a",
+    "8f8ca0",
+    "c9c6d4",
+    "f4f1e6",
+    "4a2f24",
+    "7a4d30",
+    "a8713f",
+    "d9a766",
+    "f0d9a0",
+    "e8b088",
+    "b97a5c",
+    "8a2b32",
+    "d0453c",
+    "ee8a3a",
+    "f7cf4f",
+    "2f5d43",
+    "4f9a5a",
+    "9bd46a",
+    "2c3f78",
+    "4a7ac8",
+    "8fd0ee",
+    "3fa6a0",
+    "4b2d6b",
+    "8a52a8",
+    "e58bb0"
+  ],
+  "geometry": {
+    "header": 11,
+    "floor": 18,
+    "ladder": [
+      12,
+      14
+    ],
+    "tunnel": [
+      16,
+      30
+    ]
+  },
+  "character": {
+    "sheet": "character/sheet.png",
+    "frame": [
+      32,
+      32
+    ],
+    "columns": 8,
+    "rows": 14,
+    "feet": [
+      100,
+      18
+    ],
+    "animations": {
+      "idle_breathe": {
+        "row": 0,
+        "frames": 4,
+        "fps": 3,
+        "looping": true
+      },
+      "idle_sip": {
+        "row": 1,
+        "frames": 6,
+        "fps": 5,
+        "looping": false
+      },
+      "idle_stretch": {
+        "row": 2,
+        "frames": 6,
+        "fps": 5,
+        "looping": false
+      },
+      "idle_read": {
+        "row": 3,
+        "frames": 8,
+        "fps": 4,
+        "looping": false
+      },
+      "idle_look": {
+        "row": 4,
+        "frames": 6,
+        "fps": 4,
+        "looping": false
+      },
+      "think": {
+        "row": 5,
+        "frames": 4,
+        "fps": 3,
+        "looping": true
+      },
+      "type": {
+        "row": 6,
+        "frames": 4,
+        "fps": 8,
+        "looping": true
+      },
+      "talk": {
+        "row": 7,
+        "frames": 4,
+        "fps": 5,
+        "looping": true
+      },
+      "alert": {
+        "row": 8,
+        "frames": 2,
+        "fps": 4,
+        "looping": true
+      },
+      "celebrate": {
+        "row": 9,
+        "frames": 6,
+        "fps": 8,
+        "looping": false
+      },
+      "sleep": {
+        "row": 10,
+        "frames": 4,
+        "fps": 2,
+        "looping": true
+      },
+      "hammer": {
+        "row": 11,
+        "frames": 4,
+        "fps": 6,
+        "looping": true
+      },
+      "knead": {
+        "row": 12,
+        "frames": 4,
+        "fps": 5,
+        "looping": true
+      },
+      "stir": {
+        "row": 13,
+        "frames": 4,
+        "fps": 5,
+        "looping": true
+      }
+    }
+  },
+  "avatars": [
+    {
+      "id": "ginger",
+      "name": "Ginger",
+      "swap": {}
+    },
+    {
+      "id": "umber",
+      "name": "Umber",
+      "swap": {
+        "ee8a3a": "7a4d30",
+        "a8713f": "4a2f24",
+        "4f9a5a": "4a7ac8",
+        "2f5d43": "2c3f78",
+        "8f8ca0": "d9a766",
+        "63607a": "7a4d30"
+      }
+    },
+    {
+      "id": "ash",
+      "name": "Ash",
+      "swap": {
+        "ee8a3a": "c9c6d4",
+        "a8713f": "63607a",
+        "4f9a5a": "d0453c",
+        "2f5d43": "8a2b32"
+      }
+    },
+    {
+      "id": "coal",
+      "name": "Coal",
+      "swap": {
+        "ee8a3a": "44425a",
+        "a8713f": "2b2a3a",
+        "4f9a5a": "8a52a8",
+        "2f5d43": "4b2d6b",
+        "8f8ca0": "f7cf4f",
+        "63607a": "d9a766"
+      }
+    },
+    {
+      "id": "flax",
+      "name": "Flax",
+      "swap": {
+        "ee8a3a": "d9a766",
+        "a8713f": "7a4d30",
+        "4f9a5a": "3fa6a0",
+        "2f5d43": "2f5d43",
+        "8f8ca0": "c9c6d4",
+        "63607a": "8f8ca0"
+      }
+    },
+    {
+      "id": "frost",
+      "name": "Frost",
+      "swap": {
+        "ee8a3a": "f4f1e6",
+        "a8713f": "c9c6d4",
+        "4f9a5a": "7a4d30",
+        "2f5d43": "4a2f24",
+        "8f8ca0": "8fd0ee",
+        "63607a": "4a7ac8"
+      }
+    }
+  ],
+  "portrait": {
+    "sheet": "character/portrait.png",
+    "frame": [
+      20,
+      20
+    ],
+    "states": {
+      "idle": 0,
+      "thinking": 1,
+      "working": 2,
+      "talking": 3,
+      "alert": 4,
+      "done": 5,
+      "sleeping": 6
+    }
+  },
+  "frame": {
+    "overlay": "frame/frame.png",
+    "connectors": {
+      "top": {
+        "open": {
+          "sprite": "frame/ladder_top.png",
+          "position": [
+            12,
+            18
+          ]
+        },
+        "sealed": {
+          "sprite": "frame/sealed_top.png",
+          "position": [
+            12,
+            97
+          ]
+        }
+      },
+      "bottom": {
+        "open": {
+          "sprite": "frame/ladder_bottom.png",
+          "position": [
+            12,
+            0
+          ]
+        },
+        "sealed": {
+          "sprite": "frame/sealed_bottom.png",
+          "position": [
+            12,
+            16
+          ]
+        }
+      },
+      "left": {
+        "open": {
+          "sprite": "frame/tunnel_left.png",
+          "position": [
+            0,
+            16
+          ]
+        },
+        "sealed": {
+          "sprite": "frame/sealed_left.png",
+          "position": [
+            0,
+            16
+          ]
+        }
+      },
+      "right": {
+        "open": {
+          "sprite": "frame/tunnel_right.png",
+          "position": [
+            182,
+            16
+          ]
+        },
+        "sealed": {
+          "sprite": "frame/sealed_right.png",
+          "position": [
+            182,
+            16
+          ]
+        }
+      }
+    }
+  },
+  "orb": {
+    "size": 28,
+    "back": "orb/back.png",
+    "ring": "orb/ring.png",
+    "portraitPosition": [
+      4,
+      4
+    ],
+    "gem": {
+      "sprite": "orb/gem.png",
+      "position": [
+        11,
+        0
+      ]
+    },
+    "alert": "orb/alert.png",
+    "work": {
+      "sheet": "orb/work.png",
+      "frame": [
+        10,
+        10
+      ],
+      "frames": 4,
+      "fps": 4,
+      "position": [
+        18,
+        1
+      ]
+    }
+  },
+  "props": [
+    {
+      "name": "window",
+      "sheet": "props/window.png",
+      "frame": [
+        26,
+        20
+      ],
+      "states": 3,
+      "position": [
+        33,
+        70
+      ],
+      "z": 0.5
+    },
+    {
+      "name": "bookshelf",
+      "sheet": "props/bookshelf.png",
+      "frame": [
+        30,
+        30
+      ],
+      "states": 11,
+      "position": [
+        32,
+        18
+      ],
+      "z": 0.5
+    },
+    {
+      "name": "coinjar",
+      "sheet": "props/coinjar.png",
+      "frame": [
+        10,
+        12
+      ],
+      "states": 9,
+      "position": [
+        35,
+        48
+      ],
+      "z": 0.6
+    },
+    {
+      "name": "clock",
+      "sheet": "props/clock.png",
+      "frame": [
+        13,
+        13
+      ],
+      "states": 8,
+      "position": [
+        48,
+        48
+      ],
+      "z": 0.6
+    },
+    {
+      "name": "papers",
+      "sheet": "props/papers.png",
+      "frame": [
+        14,
+        8
+      ],
+      "states": 6,
+      "position": [
+        69,
+        24
+      ],
+      "z": 2.5
+    },
+    {
+      "name": "hourglass",
+      "sheet": "props/hourglass.png",
+      "frame": [
+        8,
+        10
+      ],
+      "states": 4,
+      "position": [
+        123,
+        24
+      ],
+      "z": 2.5
+    }
+  ],
+  "scenes": [
+    {
+      "id": "workshop",
+      "name": "Workshop",
+      "bg": "scenes/workshop/bg.png",
+      "fg": "scenes/workshop/fg.png",
+      "feet": [
+        100,
+        18
+      ],
+      "props": [
+        {
+          "name": "window",
+          "position": [
+            33,
+            70
+          ],
+          "z": 0.5
+        },
+        {
+          "name": "bookshelf",
+          "position": [
+            32,
+            18
+          ],
+          "z": 0.5
+        },
+        {
+          "name": "coinjar",
+          "position": [
+            35,
+            48
+          ],
+          "z": 0.6
+        },
+        {
+          "name": "clock",
+          "position": [
+            48,
+            48
+          ],
+          "z": 0.6
+        },
+        {
+          "name": "papers",
+          "position": [
+            69,
+            24
+          ],
+          "z": 2.5
+        },
+        {
+          "name": "hourglass",
+          "position": [
+            123,
+            24
+          ],
+          "z": 2.5
+        }
+      ],
+      "ambient": [
+        {
+          "name": "cart",
+          "frame": [
+            12,
+            9
+          ],
+          "frames": 2,
+          "fps": 4,
+          "position": [
+            126,
+            30
+          ],
+          "z": 0.4,
+          "path": {
+            "to": [
+              174,
+              30
+            ],
+            "seconds": 6,
+            "every": 18
+          },
+          "sheet": "scenes/workshop/cart.png"
+        }
+      ]
+    },
+    {
+      "id": "forge",
+      "name": "Forge",
+      "bg": "scenes/forge/bg.png",
+      "fg": "scenes/forge/fg.png",
+      "feet": [
+        100,
+        18
+      ],
+      "props": [
+        {
+          "name": "window",
+          "position": [
+            33,
+            70
+          ],
+          "z": 0.5
+        },
+        {
+          "name": "bookshelf",
+          "position": [
+            32,
+            18
+          ],
+          "z": 0.5
+        },
+        {
+          "name": "coinjar",
+          "position": [
+            35,
+            48
+          ],
+          "z": 0.6
+        },
+        {
+          "name": "clock",
+          "position": [
+            48,
+            48
+          ],
+          "z": 0.6
+        },
+        {
+          "name": "papers",
+          "position": [
+            69,
+            24
+          ],
+          "z": 2.5
+        },
+        {
+          "name": "hourglass",
+          "position": [
+            86,
+            24
+          ],
+          "z": 2.5
+        }
+      ],
+      "ambient": [
+        {
+          "name": "fire",
+          "frame": [
+            20,
+            16
+          ],
+          "frames": 4,
+          "fps": 5,
+          "position": [
+            150,
+            24
+          ],
+          "z": 0.5,
+          "sheet": "scenes/forge/fire.png"
+        }
+      ],
+      "animations": {
+        "type": "hammer"
+      }
+    },
+    {
+      "id": "bakery",
+      "name": "Bakery",
+      "bg": "scenes/bakery/bg.png",
+      "fg": "scenes/bakery/fg.png",
+      "feet": [
+        100,
+        18
+      ],
+      "props": [
+        {
+          "name": "window",
+          "position": [
+            33,
+            70
+          ],
+          "z": 0.5
+        },
+        {
+          "name": "bookshelf",
+          "position": [
+            32,
+            18
+          ],
+          "z": 0.5
+        },
+        {
+          "name": "coinjar",
+          "position": [
+            35,
+            48
+          ],
+          "z": 0.6
+        },
+        {
+          "name": "clock",
+          "position": [
+            48,
+            48
+          ],
+          "z": 0.6
+        },
+        {
+          "name": "papers",
+          "position": [
+            69,
+            24
+          ],
+          "z": 2.5
+        },
+        {
+          "name": "hourglass",
+          "position": [
+            123,
+            24
+          ],
+          "z": 2.5
+        }
+      ],
+      "ambient": [
+        {
+          "name": "oven",
+          "frame": [
+            18,
+            8
+          ],
+          "frames": 4,
+          "fps": 4,
+          "position": [
+            151,
+            23
+          ],
+          "z": 0.5,
+          "sheet": "scenes/bakery/oven.png"
+        },
+        {
+          "name": "steam",
+          "frame": [
+            8,
+            12
+          ],
+          "frames": 4,
+          "fps": 3,
+          "position": [
+            114,
+            30
+          ],
+          "z": 2.6,
+          "sheet": "scenes/bakery/steam.png"
+        }
+      ],
+      "animations": {
+        "type": "knead"
+      }
+    },
+    {
+      "id": "distillery",
+      "name": "Distillery",
+      "bg": "scenes/distillery/bg.png",
+      "fg": "scenes/distillery/fg.png",
+      "feet": [
+        100,
+        18
+      ],
+      "props": [
+        {
+          "name": "window",
+          "position": [
+            33,
+            70
+          ],
+          "z": 0.5
+        },
+        {
+          "name": "bookshelf",
+          "position": [
+            32,
+            18
+          ],
+          "z": 0.5
+        },
+        {
+          "name": "coinjar",
+          "position": [
+            35,
+            48
+          ],
+          "z": 0.6
+        },
+        {
+          "name": "clock",
+          "position": [
+            48,
+            48
+          ],
+          "z": 0.6
+        },
+        {
+          "name": "papers",
+          "position": [
+            69,
+            24
+          ],
+          "z": 2.5
+        },
+        {
+          "name": "hourglass",
+          "position": [
+            123,
+            24
+          ],
+          "z": 2.5
+        }
+      ],
+      "ambient": [
+        {
+          "name": "bubbles",
+          "frame": [
+            5,
+            6
+          ],
+          "frames": 4,
+          "fps": 4,
+          "position": [
+            148,
+            34
+          ],
+          "z": 0.5,
+          "sheet": "scenes/distillery/bubbles.png"
+        },
+        {
+          "name": "drip",
+          "frame": [
+            2,
+            4
+          ],
+          "frames": 4,
+          "fps": 4,
+          "position": [
+            176,
+            36
+          ],
+          "z": 0.5,
+          "sheet": "scenes/distillery/drip.png"
+        }
+      ],
+      "animations": {
+        "type": "stir"
+      }
+    },
+    {
+      "id": "lab",
+      "name": "Alchemy Lab",
+      "bg": "scenes/lab/bg.png",
+      "fg": "scenes/lab/fg.png",
+      "feet": [
+        100,
+        18
+      ],
+      "props": [
+        {
+          "name": "window",
+          "position": [
+            33,
+            70
+          ],
+          "z": 0.5
+        },
+        {
+          "name": "bookshelf",
+          "position": [
+            32,
+            18
+          ],
+          "z": 0.5
+        },
+        {
+          "name": "coinjar",
+          "position": [
+            35,
+            48
+          ],
+          "z": 0.6
+        },
+        {
+          "name": "clock",
+          "position": [
+            48,
+            48
+          ],
+          "z": 0.6
+        },
+        {
+          "name": "papers",
+          "position": [
+            69,
+            24
+          ],
+          "z": 2.5
+        },
+        {
+          "name": "hourglass",
+          "position": [
+            123,
+            24
+          ],
+          "z": 2.5
+        }
+      ],
+      "ambient": [
+        {
+          "name": "fizz",
+          "frame": [
+            7,
+            10
+          ],
+          "frames": 4,
+          "fps": 4,
+          "position": [
+            114,
+            38
+          ],
+          "z": 2.6,
+          "sheet": "scenes/lab/fizz.png"
+        }
+      ],
+      "animations": {
+        "type": "stir"
+      }
+    },
+    {
+      "id": "treasury",
+      "name": "Treasury",
+      "bg": "scenes/treasury/bg.png",
+      "fg": "scenes/treasury/fg.png",
+      "feet": [
+        100,
+        18
+      ],
+      "props": [
+        {
+          "name": "window",
+          "position": [
+            33,
+            70
+          ],
+          "z": 0.5
+        },
+        {
+          "name": "bookshelf",
+          "position": [
+            32,
+            18
+          ],
+          "z": 0.5
+        },
+        {
+          "name": "coinjar",
+          "position": [
+            35,
+            48
+          ],
+          "z": 0.6
+        },
+        {
+          "name": "clock",
+          "position": [
+            48,
+            48
+          ],
+          "z": 0.6
+        },
+        {
+          "name": "papers",
+          "position": [
+            69,
+            24
+          ],
+          "z": 2.5
+        },
+        {
+          "name": "hourglass",
+          "position": [
+            123,
+            24
+          ],
+          "z": 2.5
+        }
+      ],
+      "ambient": [
+        {
+          "name": "glint_a",
+          "frame": [
+            5,
+            5
+          ],
+          "frames": 4,
+          "fps": 3,
+          "position": [
+            160,
+            37
+          ],
+          "z": 0.5,
+          "sheet": "scenes/treasury/glint_a.png"
+        },
+        {
+          "name": "glint_b",
+          "frame": [
+            5,
+            5
+          ],
+          "frames": 4,
+          "fps": 2,
+          "position": [
+            146,
+            33
+          ],
+          "z": 0.5,
+          "sheet": "scenes/treasury/glint_b.png"
+        }
+      ]
+    },
+    {
+      "id": "mushrooms",
+      "name": "Mushroom Farm",
+      "bg": "scenes/mushrooms/bg.png",
+      "fg": "scenes/mushrooms/fg.png",
+      "feet": [
+        100,
+        18
+      ],
+      "props": [
+        {
+          "name": "window",
+          "position": [
+            33,
+            70
+          ],
+          "z": 0.5
+        },
+        {
+          "name": "bookshelf",
+          "position": [
+            32,
+            18
+          ],
+          "z": 0.5
+        },
+        {
+          "name": "coinjar",
+          "position": [
+            35,
+            48
+          ],
+          "z": 0.6
+        },
+        {
+          "name": "clock",
+          "position": [
+            48,
+            48
+          ],
+          "z": 0.6
+        },
+        {
+          "name": "papers",
+          "position": [
+            69,
+            24
+          ],
+          "z": 2.5
+        },
+        {
+          "name": "hourglass",
+          "position": [
+            123,
+            24
+          ],
+          "z": 2.5
+        }
+      ],
+      "ambient": [
+        {
+          "name": "spores",
+          "frame": [
+            14,
+            12
+          ],
+          "frames": 4,
+          "fps": 2,
+          "position": [
+            164,
+            39
+          ],
+          "z": 0.5,
+          "sheet": "scenes/mushrooms/spores.png"
+        },
+        {
+          "name": "drip",
+          "frame": [
+            2,
+            3
+          ],
+          "frames": 1,
+          "fps": 1,
+          "position": [
+            131,
+            94
+          ],
+          "z": 0.5,
+          "path": {
+            "to": [
+              131,
+              18
+            ],
+            "seconds": 1.2,
+            "every": 5
+          },
+          "sheet": "scenes/mushrooms/drip.png"
+        }
+      ]
+    },
+    {
+      "id": "quarters",
+      "name": "Sleeping Quarters",
+      "bg": "scenes/quarters/bg.png",
+      "fg": "scenes/quarters/fg.png",
+      "feet": [
+        100,
+        18
+      ],
+      "props": [
+        {
+          "name": "window",
+          "position": [
+            33,
+            70
+          ],
+          "z": 0.5
+        },
+        {
+          "name": "bookshelf",
+          "position": [
+            32,
+            18
+          ],
+          "z": 0.5
+        },
+        {
+          "name": "coinjar",
+          "position": [
+            35,
+            48
+          ],
+          "z": 0.6
+        },
+        {
+          "name": "clock",
+          "position": [
+            48,
+            48
+          ],
+          "z": 0.6
+        },
+        {
+          "name": "papers",
+          "position": [
+            69,
+            24
+          ],
+          "z": 2.5
+        },
+        {
+          "name": "hourglass",
+          "position": [
+            123,
+            24
+          ],
+          "z": 2.5
+        }
+      ],
+      "ambient": [
+        {
+          "name": "candle",
+          "frame": [
+            4,
+            5
+          ],
+          "frames": 3,
+          "fps": 4,
+          "position": [
+            113,
+            30
+          ],
+          "z": 2.6,
+          "sheet": "scenes/quarters/candle.png"
+        },
+        {
+          "name": "snore",
+          "frame": [
+            9,
+            10
+          ],
+          "frames": 4,
+          "fps": 1,
+          "position": [
+            150,
+            60
+          ],
+          "z": 0.5,
+          "sheet": "scenes/quarters/snore.png"
+        }
+      ]
+    }
+  ]
+}
