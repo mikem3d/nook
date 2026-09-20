@@ -1,12 +1,16 @@
 import AppKit
 import SpriteKit
 
-/// The pixel scene inside one agent window. Art lives in a scaled layer with
-/// nearest-neighbour filtering; text lives in an unscaled layer so it stays crisp.
+/// The pixel scene inside one agent window: a chamber of the theme, framed by its border, with the
+/// agent's character at work in it. Art lives in a scaled layer with nearest-neighbour filtering;
+/// text lives in an unscaled layer so it stays crisp. Minimised, it shows only a round portrait.
 final class RoomScene: SKScene {
     static let W: CGFloat = 192
     static let H: CGFloat = 108
     static let bar: CGFloat = 11
+    /// Header layout in art pixels: [gem][ladder hatch][title ... badge][minimise][close].
+    private static let titleX: CGFloat = 30
+    private static let badgeRight = W - minimiseHit - 2
 
     private static let flourishes = ["idle_sip", "idle_stretch", "idle_read", "idle_look"]
     private static let ink = NSColor(red: 0.10, green: 0.10, blue: 0.16, alpha: 1)
@@ -19,6 +23,12 @@ final class RoomScene: SKScene {
     private let pixels = SKNode()
     private let ui = SKNode()
 
+    /// Everything a full window shows and an orb does not.
+    private let room = SKNode()
+    private var chamber: ChamberNode
+    private let surround: FrameNode
+    private let orbNode: OrbNode
+    private let avatar: Int
     private let actor = SKSpriteNode()
     private let dim = SKSpriteNode(color: .black, size: CGSize(width: W, height: H))
     private let border = SKShapeNode()
@@ -33,19 +43,18 @@ final class RoomScene: SKScene {
     private let coverLine = SKSpriteNode(color: paper, size: .zero)
     private let coverBelow = SKSpriteNode(color: paper, size: .zero)
 
-    private struct PropNode {
-        let sprite: SKSpriteNode
-        let textures: [SKTexture]
-        var shown = -1
-    }
-    private var props: [String: PropNode] = [:]
-
     private let label: String
     private var scale: CGFloat = 2
     private var minimised = false
     private var state: AgentState = .idle
     private var bubble = ""
     private var unread = 0
+    private var edges = Set<Edge>()
+    /// The orb's unread badge bobs one art pixel to catch the eye.
+    private var badgeLift: CGFloat = 0
+    private var orbClock = 0.0
+    /// Reduce Motion: no typewriter, no ambient loops, no pulses, no crossfade.
+    private var still = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
 
     private var titleKey = ""
     private var badgeKey = ""
@@ -72,9 +81,15 @@ final class RoomScene: SKScene {
     private var wake = 8
     private var fps = 15
 
-    init(art: Art, roomIndex: Int, title name: String) {
+    /// `roomIndex` picks the first scene round-robin; `avatarSeed` (the agent's folder path, else the
+    /// title) picks which of the theme's characters this agent is, the same one on every launch.
+    init(art: Art, roomIndex: Int, title name: String, avatarSeed: String? = nil) {
         self.art = art
         label = name
+        avatar = art.avatarIndex(for: avatarSeed ?? name)
+        chamber = ChamberNode(art: art, scene: art.scene(at: roomIndex))
+        surround = FrameNode(art: art)
+        orbNode = OrbNode(art: art, avatar: avatar)
         super.init(size: CGSize(width: Self.W * 2, height: Self.H * 2))
         scaleMode = .resizeFill
         anchorPoint = .zero
@@ -83,51 +98,35 @@ final class RoomScene: SKScene {
         addChild(pixels)
         addChild(ui)
         ui.zPosition = 100
+        pixels.addChild(room)
+        pixels.addChild(orbNode)
+        orbNode.isHidden = true
 
-        let room = art.manifest.rooms[roomIndex % art.manifest.rooms.count]
-        for (path, z) in [(room.bg, CGFloat(0)), (room.fg, CGFloat(2))] {
-            guard let texture = try? art.texture(path) else { continue }
-            let node = SKSpriteNode(texture: texture, size: CGSize(width: Self.W, height: Self.H))
-            node.anchorPoint = .zero
-            node.zPosition = z
-            pixels.addChild(node)
-        }
+        room.addChild(chamber)
+        surround.zPosition = 10
+        room.addChild(surround)
 
-        // Vital-sign props. Any that the manifest does not declare are simply absent.
-        for name in ["window", "bookshelf", "coinjar", "papers", "clock", "hourglass"] {
-            guard let (prop, textures) = art.states(forProp: name) else { continue }
-            let sprite = SKSpriteNode(texture: textures[0], size: CGSize(width: prop.frame[0], height: prop.frame[1]))
-            sprite.anchorPoint = .zero
-            sprite.position = CGPoint(x: prop.position[0], y: prop.position[1])
-            sprite.zPosition = prop.z
-            pixels.addChild(sprite)
-            props[name] = PropNode(sprite: sprite, textures: textures)
-        }
-
-        let c = art.manifest.character
+        let c = art.theme.character
         actor.size = CGSize(width: c.frame[0], height: c.frame[1])
         actor.anchorPoint = CGPoint(x: 0.5, y: 0)
-        actor.position = CGPoint(x: c.feet[0], y: c.feet[1])
         actor.zPosition = 1
-        pixels.addChild(actor)
-
-        let header = SKSpriteNode(color: NSColor(red: 0.05, green: 0.05, blue: 0.10, alpha: 0.80), size: CGSize(width: Self.W, height: Self.bar))
-        header.anchorPoint = .zero
-        header.position = CGPoint(x: 0, y: Self.H - Self.bar)
-        header.zPosition = 20
-        pixels.addChild(header)
+        room.addChild(actor)
+        placeActor()
 
         stateDot.position = CGPoint(x: 6.5, y: Self.H - Self.bar / 2)
         stateDot.zPosition = 21
-        pixels.addChild(stateDot)
+        room.addChild(stateDot)
 
         let minimise = SKSpriteNode(color: .white, size: CGSize(width: 5, height: 1))
-        minimise.position = CGPoint(x: Self.W - 6.5, y: Self.H - Self.bar / 2)
-        minimise.zPosition = 21
-        pixels.addChild(minimise)
+        minimise.position = CGPoint(x: Self.W - (Self.closeHit + Self.minimiseHit) / 2 - 0.5, y: Self.H - Self.bar / 2 - 2)
+        let close = PixelGlyph.sprite(PixelGlyph.close)
+        close.position = CGPoint(x: Self.W - Self.closeHit / 2 - 0.5, y: Self.H - Self.bar / 2)
+        for glyph in [minimise, close] {
+            glyph.zPosition = 21
+            room.addChild(glyph)
+        }
 
         badgeBox.anchorPoint = CGPoint(x: 1, y: 0)
-        badgeBox.position = CGPoint(x: Self.W - 13, y: Self.H - Self.bar + 1)
         badgeBox.zPosition = 21
         badgeBox.isHidden = true
         pixels.addChild(badgeBox)
@@ -136,7 +135,7 @@ final class RoomScene: SKScene {
         dim.alpha = 0.55
         dim.zPosition = 50
         dim.isHidden = true
-        pixels.addChild(dim)
+        room.addChild(dim)
 
         border.strokeColor = NSColor(red: 1.0, green: 0.78, blue: 0.30, alpha: 1)
         border.fillColor = .clear
@@ -144,7 +143,8 @@ final class RoomScene: SKScene {
         border.isAntialiased = false
         border.zPosition = 60
         border.isHidden = true
-        pixels.addChild(border)
+        border.path = CGPath(rect: CGRect(x: 0.5, y: 0.5, width: Self.W - 1, height: Self.H - 1), transform: nil)
+        room.addChild(border)
 
         titleText.anchorPoint = .zero
         badgeText.anchorPoint = .zero
@@ -158,6 +158,8 @@ final class RoomScene: SKScene {
 
         NotificationCenter.default.addObserver(self, selector: #selector(occlusionChanged(_:)),
                                                name: NSWindow.didChangeOcclusionStateNotification, object: nil)
+        NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(motionChanged),
+                                                          name: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification, object: nil)
         relayout()
         refreshVitals()
     }
@@ -188,6 +190,7 @@ final class RoomScene: SKScene {
             refreshBadge()
         }
         stateDot.color = Self.color(for: state)
+        orbNode.show(state: state, color: Self.color(for: state))
         if changed { poke() }
     }
 
@@ -203,7 +206,11 @@ final class RoomScene: SKScene {
         if refreshVitals() { poke() }
     }
 
-    func setDimmed(_ on: Bool) { dim.isHidden = !on; poke() }
+    func setDimmed(_ on: Bool) {
+        dim.isHidden = !on
+        orbNode.setDimmed(on)
+        poke()
+    }
 
     // --- Contract between the scene and the window chrome (themes work, 2026-09). ---
 
@@ -218,20 +225,70 @@ final class RoomScene: SKScene {
 
     /// The chrome tells the scene which sides have a neighbour; the scene opens a ladder or
     /// tunnel there so chambers connect. Empty set: a sealed chamber.
-    func setNeighbours(_ edges: Set<Edge>) {}
+    func setNeighbours(_ edges: Set<Edge>) {
+        guard edges != self.edges else { return }
+        self.edges = edges
+        surround.show(edges)
+        poke()
+    }
 
     /// Switches this window to another scene of the current theme (see `Art.sceneChoices`).
-    func setScene(_ id: String) {}
+    /// An unknown id is ignored. The old chamber fades into the new one, or is simply replaced
+    /// when the window is an orb or Reduce Motion is on.
+    func setScene(_ id: String) {
+        guard id != sceneID, let scene = art.scene(id) else { return }
+        let old = chamber
+        chamber = ChamberNode(art: art, scene: scene)
+        room.addChild(chamber)
+        placeActor()
+        animation = ""
+        refreshVitals()
+        layoutBubble()
+        if minimised || still {
+            old.removeFromParent()
+        } else {
+            // Slightly above the old chamber layer for layer, still under the character and the frame.
+            chamber.zPosition = 0.05
+            chamber.alpha = 0
+            chamber.run(.fadeIn(withDuration: Self.sceneFade)) { [chamber] in chamber.zPosition = 0 }
+            old.run(.sequence([.wait(forDuration: Self.sceneFade), .removeFromParent()]))
+        }
+        poke()
+    }
+
+    /// The scene this window shows now; one of `Art.sceneChoices`.
+    var sceneID: String { chamber.spec.id }
+
     func setActive(_ on: Bool) { border.isHidden = !on; poke() }
+
+    private static let sceneFade = 0.25
+
+    private func placeActor() {
+        let feet = chamber.spec.feet ?? art.theme.character.feet
+        actor.position = CGPoint(x: feet.first ?? Self.W / 2, y: feet.last ?? 0)
+    }
+
+    /// The animation this scene wants in place of a default one: hammering instead of typing, say.
+    private func staged(_ name: String) -> String {
+        guard let other = chamber.spec.animations?[name], art.theme.character.animations[other] != nil else { return name }
+        return other
+    }
 
     // MARK: idle cost
 
-    private var resting: Bool { minimised || occluded }
+    /// An orb only keeps drawing while it has something to say: the alert pulse, the working pick,
+    /// or a bobbing unread badge. A hidden window never does.
+    private var resting: Bool { occluded || (minimised && !orbNode.animates && unread == 0) }
 
     /// Something visible changed: make sure a resting window draws it.
     private func poke() {
         wake = 8
         view?.isPaused = false
+    }
+
+    @objc private func motionChanged() {
+        still = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        poke()
     }
 
     @objc private func occlusionChanged(_ note: Notification) {
@@ -242,28 +299,13 @@ final class RoomScene: SKScene {
 
     // MARK: vitals
 
-    @discardableResult
-    private func set(_ name: String, _ state: Int?) -> Bool {
-        guard var prop = props[name] else { return false }
-        let index = state.map { min(max($0, 0), prop.textures.count - 1) } ?? -2
-        guard index != prop.shown else { return false }
-        prop.shown = index
-        props[name] = prop
-        prop.sprite.isHidden = state == nil
-        if index >= 0 { prop.sprite.texture = prop.textures[index] }
-        return true
-    }
-
-    private func states(_ name: String) -> Int { props[name]?.textures.count ?? 1 }
-
     /// Returns true if any prop changed.
     @discardableResult
     private func refreshVitals() -> Bool {
+        let chamber = self.chamber
+        let (set, states) = (chamber.set, chamber.states)
         var changed = set("bookshelf", Vitals.level(fraction: contextFraction, states: states("bookshelf")))
-        if let shelf = props["bookshelf"]?.sprite {
-            shelf.color = .red
-            shelf.colorBlendFactor = contextFraction > Vitals.contextWarning ? 0.45 : 0
-        }
+        chamber.tint("bookshelf", .red, contextFraction > Vitals.contextWarning ? 0.45 : 0)
         changed = set("coinjar", Vitals.coins(cost: cost, states: states("coinjar"))) || changed
         changed = set("papers", min(changedFiles, states("papers") - 1)) || changed
         changed = set("window", Vitals.sky(hour: Calendar.current.component(.hour, from: Date()), states: states("window"))) || changed
@@ -294,25 +336,22 @@ final class RoomScene: SKScene {
 
     private func relayout() {
         let s = scale
-        // Minimised windows show only the header strip, so slide everything down.
-        let shift = minimised ? -(Self.H - Self.bar) * s : 0
         pixels.setScale(s)
-        pixels.position = CGPoint(x: 0, y: shift)
-        ui.position = CGPoint(x: 0, y: shift)
-
-        let visibleBottom = minimised ? Self.H - Self.bar : 0
-        border.path = CGPath(rect: CGRect(x: 0.5, y: visibleBottom + 0.5, width: Self.W - 1, height: Self.H - visibleBottom - 1), transform: nil)
+        // A minimised window is an orb-sized square showing nothing but the portrait.
+        room.isHidden = minimised
+        orbNode.isHidden = !minimised
+        titleText.isHidden = minimised
 
         // Header text sits on the font-pixel grid, centred in the bar as nearly as that grid allows.
         let cell = CGFloat(PixelFont.cellW) * fp
-        let room = Int((Self.W - 12 - 30) * s / cell)
-        let shown = label.count > room ? String(label.prefix(max(room - 1, 1))) + "…" : label
+        let columns = Int((Self.badgeRight - Self.titleX - 2) * s / cell)
+        let shown = label.count > columns ? String(label.prefix(max(columns - 1, 1))) + "…" : label
         let key = "\(shown)|\(fp)"
         if key != titleKey {
             titleKey = key
             setText(titleText, lines: [shown], color: .white)
         }
-        titleText.position = CGPoint(x: 12 * s, y: (Self.H - Self.bar) * s + headerInset)
+        titleText.position = CGPoint(x: Self.titleX * s, y: (Self.H - Self.bar) * s + headerInset)
 
         badgeKey = ""
         refreshBadge()
@@ -325,17 +364,21 @@ final class RoomScene: SKScene {
         badgeBox.isHidden = unread == 0
         badgeText.isHidden = unread == 0
         guard unread > 0 else { return }
-        let label = unread > 99 ? "99+" : String(unread)
-        let key = "\(label)|\(fp)"
+        // The orb has room for one digit and a plus.
+        let label = minimised ? (unread > 9 ? "9+" : String(unread)) : (unread > 99 ? "99+" : String(unread))
+        let key = "\(label)|\(fp)|\(minimised)|\(badgeLift)"
         guard key != badgeKey else { return }
         badgeKey = key
         setText(badgeText, lines: [label], color: .white)
-        // The box is whole art pixels; the text is centred in it on the font grid.
+        // The box is whole art pixels; the text is centred in it on the font grid. In the header it
+        // sits left of the buttons; on an orb it overlaps the top right of the ring.
         let width = (badgeText.size.width / scale).rounded(.up) + 2
+        let top = minimised ? Self.orb - 1 + badgeLift : Self.H - 1
         badgeBox.size = CGSize(width: width, height: Self.bar - 2)
+        badgeBox.position = CGPoint(x: minimised ? Self.orb : Self.badgeRight, y: top - (Self.bar - 2))
         let left = (badgeBox.position.x - width) * scale
         let slack = ((width * scale - badgeText.size.width) / 2 / fp).rounded(.down) * fp
-        badgeText.position = CGPoint(x: left + slack + fp, y: (Self.H - Self.bar) * scale + headerInset)
+        badgeText.position = CGPoint(x: left + slack + fp, y: (top + 1 - Self.bar) * scale + headerInset)
     }
 
     /// Characters per line and lines per page. The bubble is at most 36 px of text tall so the
@@ -364,7 +407,7 @@ final class RoomScene: SKScene {
         let left = Self.W - 4 - width
         let top = Self.H - Self.bar - 2
         // The tail's tip lands just beside the character's head.
-        let tip = art.manifest.character.feet[0] + 8
+        let tip = actor.position.x + 8
         let tailX = Int(min(max(tip + 3 - left, 4), width - 7))
         if let image = BubbleArt.image(width: Int(width), height: Int(height), tailX: tailX, more: page + 1 < pages.count,
                                        ink: Self.ink, paper: Self.paper) {
@@ -378,7 +421,7 @@ final class RoomScene: SKScene {
         bubbleBox.isHidden = false
         bubbleText.isHidden = false
 
-        if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion { revealed = Double(lines.reduce(0) { $0 + $1.count }) }
+        if still { revealed = Double(lines.reduce(0) { $0 + $1.count }) }
         layoutReveal()
     }
 
@@ -443,18 +486,19 @@ final class RoomScene: SKScene {
         let dt = lastUpdate == 0 ? 0 : min(max(currentTime - lastUpdate, 0), 0.5)
         lastUpdate = currentTime
 
-        let typing = advanceBubble(dt)
+        let typing = minimised ? false : advanceBubble(dt)
         // Time-driven props (clock hand, hourglass, the sky) only need a look once a second.
         vitalsClock += dt
-        if vitalsClock >= 1 {
+        if vitalsClock >= 1, !minimised {
             vitalsClock = 0
             refreshVitals()
         }
         defer {
             // Only draw as often as what is on screen needs: 8 fps typing and the typewriter get 15,
-            // the 3 to 5 fps idle poses 10, sleep 4. A resting window stops once its changes are drawn.
-            let speed = art.manifest.character.animations[animation]?.fps ?? 3
-            let wanted = typing || speed > 6 ? 15 : (state == .sleeping ? 4 : 10)
+            // the 3 to 5 fps idle poses and ambient loops 10, sleep and the orb 4. A resting window
+            // stops once its changes are drawn.
+            let speed = art.theme.character.animations[animation]?.fps ?? 3
+            let wanted = minimised ? 4 : (typing || speed > 6 ? 15 : (state == .sleeping ? 4 : 10))
             if wanted != fps {
                 fps = wanted
                 view?.preferredFramesPerSecond = wanted
@@ -464,10 +508,13 @@ final class RoomScene: SKScene {
             }
         }
 
+        guard !minimised else { return advanceOrb(dt) }
+        chamber.advance(dt, still: still)
+
         if state == .idle {
             nextFlourish -= dt
             if flourish == nil, nextFlourish <= 0 {
-                flourish = Self.flourishes.filter { art.manifest.character.animations[$0] != nil }.randomElement()
+                flourish = Self.flourishes.filter { art.theme.character.animations[$0] != nil }.randomElement()
                 nextFlourish = Double.random(in: 6...14)
             }
         } else {
@@ -478,7 +525,7 @@ final class RoomScene: SKScene {
         switch state {
         case .idle: wanted = flourish ?? "idle_breathe"
         case .thinking: wanted = "think"
-        case .working: wanted = "type"
+        case .working: wanted = staged("type")
         case .talking: wanted = "talk"
         case .alert: wanted = "alert"
         case .done: wanted = "celebrate"
@@ -489,7 +536,7 @@ final class RoomScene: SKScene {
             frameIndex = 0
             clock = 0
         }
-        guard let def = art.manifest.character.animations[animation] else { return }
+        guard let def = art.theme.character.animations[animation] else { return }
 
         clock += dt
         let step = 1.0 / max(def.fps, 0.1)
@@ -505,9 +552,19 @@ final class RoomScene: SKScene {
                 }
             }
         }
-        let textures = art.frames(for: animation)
+        let textures = art.frames(for: animation, avatar: avatar)
         if frameIndex < textures.count, actor.texture !== textures[frameIndex] {
             actor.texture = textures[frameIndex]
+        }
+    }
+
+    private func advanceOrb(_ dt: Double) {
+        orbNode.advance(dt, still: still)
+        orbClock += dt
+        let lift: CGFloat = unread > 0 && !still && Int(orbClock * 2) % 2 == 1 ? 1 : 0
+        if lift != badgeLift {
+            badgeLift = lift
+            refreshBadge()
         }
     }
 }

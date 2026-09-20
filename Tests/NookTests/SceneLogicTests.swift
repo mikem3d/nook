@@ -53,15 +53,7 @@ final class SceneLogicTests: XCTestCase {
         XCTAssertEqual(Persistence.restorable(decoded).map(\.label), ["a", "b"])
     }
 
-    func testManifestWithoutPropsStillDecodes() throws {
-        let json = """
-        {"character": {"sheet": "c.png", "frame": [32, 32], "columns": 8, "rows": 1, "feet": [84, 26], "animations": {}},
-         "rooms": [{"id": "a", "bg": "a_bg.png", "fg": "a_fg.png"}]}
-        """
-        XCTAssertNil(try JSONDecoder().decode(Manifest.self, from: Data(json.utf8)).props)
-    }
-
-    func testBundledManifestDeclaresEveryPropAndTheFontLoads() throws {
+    func testBundledThemeDeclaresEveryPropAndTheFontLoads() throws {
         let art = try Art()
         for name in ["window", "bookshelf", "coinjar", "papers", "clock", "hourglass"] {
             let loaded = try XCTUnwrap(art.states(forProp: name), name)

@@ -24,9 +24,65 @@ MAX_COLOURS = 32
 # ---------- manifest ----------
 
 def load_manifest(path=None) -> dict:
+    """The current theme, in the shape the tools work with.
+
+    `path` is Assets/manifest.json (the default; it names the theme) or a theme.json. Every file
+    path in the result is relative to the Assets folder (themes/<id>/...), so a candidate set is
+    still "a folder laid out like Sources/Nook/Assets". `rooms` is an alias of `scenes`, each with
+    its own `feet`.
+    """
     path = Path(path) if path else ASSETS / "manifest.json"
     with open(path) as f:
-        return json.load(f)
+        data = json.load(f)
+    prefix = ""
+    if "theme" in data and "scenes" not in data:
+        prefix = f"themes/{data['theme']}/"
+        with open(path.parent / prefix / "theme.json") as f:
+            data = json.load(f)
+    elif path.parent.parent.name == "themes":
+        prefix = f"themes/{path.parent.name}/"
+    man = _prefixed(data, prefix)
+    man["prefix"] = prefix
+    for scene in man["scenes"]:
+        scene.setdefault("feet", man["character"]["feet"])
+    man["rooms"] = man["scenes"]
+    return man
+
+
+_PATH_KEYS = {"sheet", "sprite", "bg", "fg", "overlay", "back", "ring", "alert"}
+
+
+def _prefixed(node, prefix):
+    if isinstance(node, dict):
+        return {k: prefix + v if k in _PATH_KEYS and isinstance(v, str) else _prefixed(v, prefix) for k, v in node.items()}
+    if isinstance(node, list):
+        return [_prefixed(v, prefix) for v in node]
+    return node
+
+
+def theme_palette(man: dict) -> np.ndarray | None:
+    """The theme's own palette (theme.json "palette"), or None if it declares none."""
+    cols = man.get("palette")
+    return np.array([parse_hex(c) for c in cols], np.uint8) if cols else None
+
+
+def asset_files(man: dict) -> list[str]:
+    """Every image the theme declares, relative to the Assets folder, in a stable order."""
+    out: list[str] = []
+
+    def walk(node):
+        if isinstance(node, dict):
+            for k, v in node.items():
+                if k in _PATH_KEYS and isinstance(v, str):
+                    if v not in out:
+                        out.append(v)
+                else:
+                    walk(v)
+        elif isinstance(node, list):
+            for v in node:
+                walk(v)
+    walk({k: v for k, v in man.items() if k != "rooms"})
+    return out
 
 
 def anim_rows(manifest: dict) -> list[tuple[str, dict]]:

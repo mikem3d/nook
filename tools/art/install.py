@@ -7,8 +7,8 @@
 
 DRY RUN BY DEFAULT: the Assets folder belongs to another engineer. The set must pass
 `sheet.py validate` (and `consistency.py` if it contains a sheet) or nothing is copied.
-Only files named in the manifest are copied; manifest.json itself is never touched.
-A set may be partial (one room, or just the sheet).
+Only images named in the theme are copied; manifest.json and theme.json are never touched.
+A set may be partial (one scene, just the sheet, just the frame pieces).
 """
 from __future__ import annotations
 
@@ -30,7 +30,7 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("candidate", nargs="?", help="folder laid out like Sources/Nook/Assets")
     ap.add_argument("--dest", default=str(C.ASSETS))
-    ap.add_argument("--palette", help="palette every pixel must belong to (strongly recommended)")
+    ap.add_argument("--palette", help="palette every pixel must belong to (default: the theme's own)")
     ap.add_argument("--apply", action="store_true", help="actually copy; without it this is a dry run")
     ap.add_argument("--allow-drift", action="store_true", help="install even if consistency.py flags rows")
     ap.add_argument("--backup-dir", default=str(C.TOOLS / "backups"))
@@ -59,14 +59,14 @@ def main(argv=None) -> int:
     cand = Path(a.candidate)
     man = C.load_manifest(a.manifest or dest / "manifest.json")
     if (cand / "manifest.json").exists() and json.loads((cand / "manifest.json").read_text()) != man:
-        print("  note: the candidate's manifest.json differs from the installed one and is ignored; "
+        print("  note: the candidate's manifest.json differs from the installed theme and is ignored; "
               "manifest changes go through the engine owner")
 
     print(f"validating {cand} ...")
     rep = S.validate_set(cand, man, a.palette)
     rep.print()
-    if not a.palette:
-        print("  WARNING no --palette given: palette membership was not checked, only the colour count")
+    if not a.palette and C.theme_palette(man) is None:
+        print("  WARNING no --palette given and the theme declares none: only the colour count was checked")
     if rep.errors:
         print(f"REFUSED: {len(rep.errors)} validation error(s); nothing copied")
         return 1
@@ -79,7 +79,7 @@ def main(argv=None) -> int:
                 print("REFUSED: consistency check flagged rows (use --allow-drift to override); nothing copied")
                 return 1
 
-    files = [f for f in [sheet_rel] + [r[k] for r in man["rooms"] for k in ("bg", "fg")] if (cand / f).exists()]
+    files = [f for f in C.asset_files(man) if (cand / f).exists()]
     stamp = time.strftime("%Y%m%d-%H%M%S")
     backup = Path(a.backup_dir) / stamp
     changed = 0

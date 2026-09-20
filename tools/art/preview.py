@@ -6,8 +6,14 @@
 Writes (all nearest-neighbour, default 4x):
   contact_sheet.png            every animation row, labelled with frames / fps / loop
   anim_<name>.gif              one GIF per animation at the manifest fps
-  composite_<room>.png         room bg + character + room fg at the manifest feet position
-  composite_<room>_<anim>.gif  the same, animated (--anims, default idle_breathe and type)
+  composite_<scene>.png         the chamber as the engine draws it: bg, props, ambient, character,
+                                fg, the frame and its sealed connector pieces
+  composite_<scene>_<anim>.gif  the same, animated (--anims, default idle_breathe and type; "type"
+                                becomes the scene's own work pose if it declares one)
+  stack_vertical.png            three chambers stacked with NO gap, ladders open: judge the seams
+  stack_horizontal.png          two chambers side by side, tunnel open
+  stack_mountain.png            every scene in a two-column mountain, all connectors open
+  orbs.png                      the minimised orb per state, for each avatar variant
 
 Files missing from the set fall back to Sources/Nook/Assets, so a new room can be
 previewed with the current character and the other way round (disable with --no-fallback).
@@ -82,17 +88,96 @@ def anim_frames(sheet: np.ndarray, spec: dict, fw: int, fh: int) -> list[Image.I
     return [Image.fromarray(np.ascontiguousarray(C.frame_of(sheet, spec["row"], c, fw, fh)), "RGBA") for c in range(spec["frames"])]
 
 
-def composite(bg: Image.Image, fg: Image.Image | None, frame: Image.Image, man: dict) -> Image.Image:
-    """Same placement as RoomScene.swift: the frame's bottom centre sits at character.feet,
-    measured from the canvas bottom-left."""
-    cw, ch_ = man["canvas"]
-    fw, fh = man["character"]["frame"]
-    fx, fy = man["character"]["feet"]
-    out = bg.copy()
-    out.alpha_composite(frame, (int(fx - fw // 2), int(ch_ - fy - fh)))
-    if fg is not None:
-        out.alpha_composite(fg)
-    return out
+class Chamber:
+    """Draws a scene the way RoomScene.swift does. Positions are bottom-left, from the canvas bottom-left."""
+
+    def __init__(self, man: dict, find):
+        self.man, self.find, self.cache = man, find, {}
+
+    def img(self, rel: str | None) -> Image.Image | None:
+        if rel and rel not in self.cache:
+            path = self.find(rel)
+            self.cache[rel] = Image.open(path).convert("RGBA") if path else None
+        return self.cache.get(rel)
+
+    def cell(self, rel: str, frame, index: int) -> Image.Image | None:
+        sheet = self.img(rel)
+        return sheet.crop((index * frame[0], 0, (index + 1) * frame[0], frame[1])) if sheet else None
+
+    def put(self, canvas: Image.Image, im: Image.Image | None, pos):
+        if im is not None:
+            canvas.alpha_composite(im, (int(pos[0]), int(canvas.height - pos[1] - im.height)))
+
+    def draw(self, scene: dict, actor: Image.Image | None, edges=(), tick: int = 0, avatar: int = 0) -> Image.Image | None:
+        bg = self.img(scene["bg"])
+        if bg is None or bg.size != tuple(self.man["canvas"]):
+            return None
+        out = bg.copy()
+        layers = []
+        props = {p["name"]: p for p in self.man.get("props") or []}
+        for place in scene.get("props") or []:
+            prop = props.get(place["name"])
+            if prop and place["name"] != "hourglass":   # the engine hides the hourglass until a turn runs long
+                layers.append((place.get("z", prop["z"]), self.cell(prop["sheet"], prop["frame"], min(prop["states"] // 2, prop["states"] - 1)), place["position"]))
+        for amb in scene.get("ambient") or []:
+            pos = amb["position"]
+            if amb.get("path"):
+                to = amb["path"]["to"]
+                pos = [(pos[0] + to[0]) // 2, (pos[1] + to[1]) // 2]
+            layers.append((amb["z"], self.cell(amb["sheet"], amb["frame"], tick % amb["frames"]), pos))
+        if actor is not None:
+            layers.append((1, recolour(actor, self.man, avatar), [scene["feet"][0] - actor.width // 2, scene["feet"][1]]))
+        layers.append((2, self.img(scene["fg"]), [0, 0]))
+        for _, im, pos in sorted(layers, key=lambda l: l[0]):
+            self.put(out, im, pos)
+        frame = self.man.get("frame") or {}
+        self.put(out, self.img(frame.get("overlay")), [0, 0])
+        for edge, con in (frame.get("connectors") or {}).items():
+            piece = con.get("open" if edge in edges else "sealed")
+            if piece:
+                self.put(out, self.img(piece["sprite"]), piece["position"])
+        return out
+
+
+def recolour(im: Image.Image, man: dict, avatar: int) -> Image.Image:
+    """The engine's avatar palette swap (PaletteSwap.swift): exact colour match on the original pixels."""
+    avatars = man.get("avatars") or []
+    if not 0 < avatar < len(avatars):
+        return im
+    a = np.array(im)
+    out = a.copy()
+    for src, dst in avatars[avatar]["swap"].items():
+        hit = (a[..., :3] == C.parse_hex(src)).all(-1) & (a[..., 3] == 255)
+        out[hit, :3] = C.parse_hex(dst)
+    return Image.fromarray(out, "RGBA")
+
+
+def work_anim(man: dict, scene: dict, name: str) -> str:
+    other = (scene.get("animations") or {}).get(name)
+    return other if other in man["character"]["animations"] else name
+
+
+def orbs(ch: Chamber, man: dict, k: int) -> Image.Image | None:
+    orb, p = man.get("orb") or {}, man.get("portrait")
+    if not p or not orb.get("ring"):
+        return None
+    size, states = orb.get("size", 28), sorted(p["states"].items(), key=lambda kv: kv[1])
+    n = max(len(man.get("avatars") or []), 1)
+    out = Image.new("RGBA", ((size + 4) * len(states) + 4, (size + 4) * n + 4), BACKDROP)
+    for row in range(n):
+        for col, (state, index) in enumerate(states):
+            cell = Image.new("RGBA", (size, size))
+            ch.put(cell, ch.img(orb.get("back")), [0, 0])
+            ch.put(cell, recolour(ch.cell(p["sheet"], p["frame"], index), man, row), orb.get("portraitPosition", [4, 4]))
+            ch.put(cell, ch.img(orb["ring"]), [0, 0])
+            if state == "alert":
+                ch.put(cell, ch.img(orb.get("alert")), [0, 0])
+            if state == "working" and orb.get("work"):
+                ch.put(cell, ch.cell(orb["work"]["sheet"], orb["work"]["frame"], 2), orb["work"]["position"])
+            if orb.get("gem"):
+                ch.put(cell, ch.img(orb["gem"]["sprite"]), orb["gem"]["position"])
+            out.alpha_composite(cell, (4 + col * (size + 4), 4 + row * (size + 4)))
+    return up(out, k)
 
 
 def main(argv=None) -> int:
@@ -134,25 +219,47 @@ def main(argv=None) -> int:
                 frames.append(up(cell, k))
             p = out / f"anim_{name}.gif"
             save_gif(frames, p, spec["fps"]); written.append(p)
-    for room in man["rooms"]:
-        bgp, fgp = find(room["bg"]), find(room["fg"])
-        if bgp is None or sheet is None:
-            continue
-        bg = Image.open(bgp).convert("RGBA")
-        fg = Image.open(fgp).convert("RGBA") if fgp else None
-        if bg.size != tuple(man["canvas"]) or (fg and fg.size != tuple(man["canvas"])):
-            print(f"  skipped room {room['id']}: layer size is not {man['canvas']}")
-            continue
-        first = anim_frames(sheet, C.anim_rows(man)[0][1], fw, fh)[0]
-        p = out / f"composite_{room['id']}.png"
-        up(composite(bg, fg, first, man), k).save(p); written.append(p)
-        for name in a.anims:
-            spec = man["character"]["animations"].get(name)
-            if not spec:
+    if sheet is not None:
+        ch = Chamber(man, find)
+        rows = man["character"]["animations"]
+        def actor(name, col=0):
+            return anim_frames(sheet, rows[name], fw, fh)[col % rows[name]["frames"]]
+        for scene in man["scenes"]:
+            still = ch.draw(scene, actor("idle_breathe"))
+            if still is None:
+                print(f"  skipped scene {scene['id']}: bg missing or not {man['canvas']}")
                 continue
-            p = out / f"composite_{room['id']}_{name}.gif"
-            save_gif([up(composite(bg, fg, fr, man), k) for fr in anim_frames(sheet, spec, fw, fh)], p, spec["fps"])
-            written.append(p)
+            p = out / f"composite_{scene['id']}.png"
+            up(still, k).save(p); written.append(p)
+            for name in a.anims:
+                if name not in rows:
+                    continue
+                staged = work_anim(man, scene, name)
+                p = out / f"composite_{scene['id']}_{name}.gif"
+                save_gif([up(ch.draw(scene, fr, tick=i), k) for i, fr in enumerate(anim_frames(sheet, rows[staged], fw, fh))], p, rows[staged]["fps"])
+                written.append(p)
+
+        # Chambers butted together exactly as docked windows are: no gap, connectors open where they touch.
+        scenes = man["scenes"]
+        cw, ch_ = man["canvas"]
+        def grid(cells, cols):
+            n_rows = (len(cells) + cols - 1) // cols
+            sheet_ = Image.new("RGBA", (cw * cols, ch_ * n_rows))
+            for i, scene in enumerate(cells):
+                col, row = i % cols, i // cols
+                edges = {e for e, on in (("top", row > 0), ("bottom", i + cols < len(cells)), ("left", col > 0),
+                                         ("right", col + 1 < cols and i + 1 < len(cells))) if on}
+                im = ch.draw(scene, actor(work_anim(man, scene, "type"), i), edges, tick=i, avatar=i)
+                if im is not None:
+                    sheet_.alpha_composite(im, (col * cw, row * ch_))
+            return up(sheet_, k)
+        for name, cells, cols in (("stack_vertical", scenes[:3], 1), ("stack_horizontal", scenes[:2], 2), ("stack_mountain", scenes, 2)):
+            p = out / f"{name}.png"
+            grid(cells, cols).save(p); written.append(p)
+        orb_sheet = orbs(ch, man, k)
+        if orb_sheet is not None:
+            p = out / "orbs.png"
+            orb_sheet.save(p); written.append(p)
     print(f"wrote {len(written)} preview files to {out}/")
     return 0 if written else 1
 
