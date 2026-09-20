@@ -1,0 +1,11 @@
+{
+  "hooks": {
+    "SessionStart": [{ "hooks": [{ "type": "command", "command": "/Users/zheriam/work/claude-avatar/nook/target/release/nook hook" }] }],
+    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "/Users/zheriam/work/claude-avatar/nook/target/release/nook hook" }] }],
+    "PreToolUse": [{ "matcher": "*", "hooks": [{ "type": "command", "command": "/Users/zheriam/work/claude-avatar/nook/target/release/nook hook" }] }],
+    "PostToolUse": [{ "matcher": "*", "hooks": [{ "type": "command", "command": "/Users/zheriam/work/claude-avatar/nook/target/release/nook hook" }] }],
+    "Notification": [{ "hooks": [{ "type": "command", "command": "/Users/zheriam/work/claude-avatar/nook/target/release/nook hook" }] }],
+    "Stop": [{ "hooks": [{ "type": "command", "command": "/Users/zheriam/work/claude-avatar/nook/target/release/nook hook" }] }],
+    "SessionEnd": [{ "hooks": [{ "type": "command", "command": "/Users/zheriam/work/claude-avatar/nook/target/release/nook hook" }] }]
+  }
+}

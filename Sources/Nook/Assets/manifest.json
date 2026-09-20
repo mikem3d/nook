@@ -1,0 +1,104 @@
+{
+  "canvas": [
+    192,
+    108
+  ],
+  "character": {
+    "sheet": "character/sheet.png",
+    "frame": [
+      32,
+      32
+    ],
+    "columns": 8,
+    "rows": 11,
+    "feet": [
+      84,
+      26
+    ],
+    "animations": {
+      "idle_breathe": {
+        "row": 0,
+        "frames": 4,
+        "fps": 3,
+        "looping": true
+      },
+      "idle_sip": {
+        "row": 1,
+        "frames": 6,
+        "fps": 5,
+        "looping": false
+      },
+      "idle_stretch": {
+        "row": 2,
+        "frames": 6,
+        "fps": 5,
+        "looping": false
+      },
+      "idle_read": {
+        "row": 3,
+        "frames": 8,
+        "fps": 4,
+        "looping": false
+      },
+      "idle_look": {
+        "row": 4,
+        "frames": 6,
+        "fps": 4,
+        "looping": false
+      },
+      "think": {
+        "row": 5,
+        "frames": 4,
+        "fps": 3,
+        "looping": true
+      },
+      "type": {
+        "row": 6,
+        "frames": 4,
+        "fps": 8,
+        "looping": true
+      },
+      "talk": {
+        "row": 7,
+        "frames": 4,
+        "fps": 5,
+        "looping": true
+      },
+      "alert": {
+        "row": 8,
+        "frames": 2,
+        "fps": 4,
+        "looping": true
+      },
+      "celebrate": {
+        "row": 9,
+        "frames": 6,
+        "fps": 8,
+        "looping": false
+      },
+      "sleep": {
+        "row": 10,
+        "frames": 4,
+        "fps": 2,
+        "looping": true
+      }
+    }
+  },
+  "rooms": [
+    {
+      "id": "study",
+      "bg": "rooms/study_bg.png",
+      "fg": "rooms/study_fg.png"
+    },
+    {
+      "id": "workshop",
+      "bg": "rooms/workshop_bg.png",
+      "fg": "rooms/workshop_fg.png"
+    },
+    {
+      "id": "nightlab",
+      "bg": "rooms/nightlab_bg.png",
+      "fg": "rooms/nightlab_fg.png"
+    }
+  ]
+}
