@@ -100,5 +100,91 @@
       "bg": "rooms/nightlab_bg.png",
       "fg": "rooms/nightlab_fg.png"
     }
+  ],
+  "props": [
+    {
+      "name": "window",
+      "sheet": "props/window.png",
+      "frame": [
+        40,
+        30
+      ],
+      "states": 3,
+      "position": [
+        20,
+        54
+      ],
+      "z": 0.5
+    },
+    {
+      "name": "bookshelf",
+      "sheet": "props/bookshelf.png",
+      "frame": [
+        36,
+        34
+      ],
+      "states": 11,
+      "position": [
+        4,
+        8
+      ],
+      "z": 0.5
+    },
+    {
+      "name": "coinjar",
+      "sheet": "props/coinjar.png",
+      "frame": [
+        10,
+        12
+      ],
+      "states": 9,
+      "position": [
+        26,
+        42
+      ],
+      "z": 0.6
+    },
+    {
+      "name": "papers",
+      "sheet": "props/papers.png",
+      "frame": [
+        14,
+        8
+      ],
+      "states": 6,
+      "position": [
+        47,
+        38
+      ],
+      "z": 2.5
+    },
+    {
+      "name": "clock",
+      "sheet": "props/clock.png",
+      "frame": [
+        13,
+        13
+      ],
+      "states": 8,
+      "position": [
+        3,
+        67
+      ],
+      "z": 0.5
+    },
+    {
+      "name": "hourglass",
+      "sheet": "props/hourglass.png",
+      "frame": [
+        8,
+        10
+      ],
+      "states": 4,
+      "position": [
+        138,
+        38
+      ],
+      "z": 2.5
+    }
   ]
 }

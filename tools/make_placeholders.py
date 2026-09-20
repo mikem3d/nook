@@ -163,9 +163,6 @@ def room(name, p):
     if name == "nightlab":
         for x, y in ((25, 28), (33, 45), (47, 30), (54, 47)):
             bg.rect(x, y, 1, 1, WHITE)
-    bg.rect(128, 44, 50, 3, shade(p["desk"], 0.7))
-    for i, c in enumerate(((200, 80, 80), (80, 160, 120), (230, 200, 90), (90, 120, 200), (180, 110, 190))):
-        bg.rect(131 + i * 6, 32 + (i % 2) * 2, 4, 12 - (i % 2) * 2, c + (255,))
     bg.save(os.path.join(ROOT, "rooms", f"{name}_bg.png"))
 
     fg = Img(W, H)
@@ -181,6 +178,100 @@ def room(name, p):
     fg.save(os.path.join(ROOT, "rooms", f"{name}_fg.png"))
 
 
+# ---------- props (vital signs) ----------
+#
+# One sheet per prop, its states side by side. Frame coordinates below count from the frame's
+# top-left; "position" in the manifest is the frame's bottom-left from the canvas bottom-left.
+
+WOOD = (120, 78, 48, 255)
+GOLD = (240, 200, 70, 255)
+GLASS = (190, 225, 235, 255)
+BOOKS = ((200, 80, 80), (80, 160, 120), (230, 200, 90), (90, 120, 200), (180, 110, 190))
+
+
+def window_state(f, i):
+    sky = ((150, 210, 240, 255), (240, 150, 100, 255), (25, 25, 60, 255))[i]
+    f.rect(0, 0, 40, 30, sky)
+    if i == 0:
+        f.rect(28, 4, 6, 6, (255, 235, 130, 255)); f.rect(6, 8, 10, 3, WHITE); f.rect(9, 6, 5, 2, WHITE)
+    elif i == 1:
+        f.rect(0, 20, 40, 10, (225, 110, 90, 255)); f.rect(25, 16, 8, 6, (255, 215, 120, 255))
+    else:
+        f.rect(27, 4, 6, 6, WHITE); f.rect(29, 4, 4, 4, sky)
+        for x, y in ((5, 5), (13, 21), (22, 12), (34, 23), (9, 14)):
+            f.rect(x, y, 1, 1, WHITE)
+    f.rect(19, 0, 2, 30, INK); f.rect(0, 14, 40, 2, INK)
+
+
+def bookshelf_state(f, i):
+    f.rect(0, 0, 36, 34, WOOD)
+    f.rect(2, 2, 32, 14, shade(WOOD, 0.45)); f.rect(2, 18, 32, 14, shade(WOOD, 0.45))
+    for n in range(i):  # bottom shelf fills first, left to right
+        shelf, slot = divmod(n, 5)
+        h = 12 - (n % 3)
+        f.rect(3 + slot * 6, (32 if shelf == 0 else 16) - h, 5, h, BOOKS[(n * 2) % 5] + (255,))
+
+
+def coinjar_state(f, i):
+    f.rect(1, 1, 8, 11, GLASS); f.rect(2, 2, 6, 9, shade(GLASS, 0.55)); f.rect(2, 0, 6, 2, shade(WOOD, 1.3))
+    f.rect(2, 11 - i, 6, i, GOLD)
+    if i:
+        f.rect(3, 11 - i, 2, 1, WHITE)
+
+
+def papers_state(f, i):
+    for n in range(i):
+        f.rect(1 + (n % 2), 7 - n, 12, 1, WHITE if n % 2 == 0 else (215, 215, 225, 255))
+    if i:
+        f.rect(3 + (i % 2), 8 - i, 6, 1, (150, 150, 170, 255))
+
+
+def clock_state(f, i):
+    f.rect(1, 0, 11, 13, INK); f.rect(0, 1, 13, 11, INK); f.rect(1, 1, 11, 11, WHITE)
+    for x, y in ((1, 1), (11, 1), (1, 11), (11, 11)):
+        f.rect(x, y, 1, 1, INK)
+    dx, dy = ((0, -1), (1, -1), (1, 0), (1, 1), (0, 1), (-1, 1), (-1, 0), (-1, -1))[i]
+    for k in range(1, 5 if dx == 0 or dy == 0 else 4):
+        f.rect(6 + dx * k, 6 + dy * k, 1, 1, (200, 60, 60, 255))
+    f.rect(6, 6, 1, 1, INK)
+
+
+def hourglass_state(f, i):
+    f.rect(0, 0, 8, 1, WOOD); f.rect(0, 9, 8, 1, WOOD)
+    for row, (x, w) in enumerate(((1, 6), (1, 6), (2, 4), (3, 2), (3, 2), (2, 4), (1, 6), (1, 6))):
+        f.rect(x, 1 + row, w, 1, GLASS)
+    # Sand moves from the top bulb to the bottom one across the states.
+    top, bottom = ((3, 0), (2, 1), (1, 2), (0, 3))[i]
+    bulb = ((3, 2), (2, 4), (2, 4))  # rows from the neck outward: x, width
+    for k in range(top):
+        f.rect(bulb[k][0], 4 - k, bulb[k][1], 1, GOLD)
+    for k in range(bottom):
+        f.rect(bulb[2 - k][0], 8 - k, bulb[2 - k][1], 1, GOLD)
+    if 0 < i < 3:
+        f.rect(4, 5, 1, 1, GOLD)
+
+
+# name, frame, states, position (bottom-left, canvas px from bottom-left), z, painter
+PROPS = [
+    ("window", (40, 30), 3, (20, 54), 0.5, window_state),       # day, dusk, night
+    ("bookshelf", (36, 34), 11, (4, 8), 0.5, bookshelf_state),   # context used: 0 to 10 books
+    ("coinjar", (10, 12), 9, (26, 42), 0.6, coinjar_state),      # cost, log scale
+    ("papers", (14, 8), 6, (47, 38), 2.5, papers_state),         # uncommitted files: 0 to 5+
+    ("clock", (13, 13), 8, (3, 67), 0.5, clock_state),           # hand sweeps during a turn
+    ("hourglass", (8, 10), 4, (138, 38), 2.5, hourglass_state),  # only shown once a turn passes 5 minutes
+]
+
+
+def props():
+    for name, (w, h), states, _, _, paint in PROPS:
+        sheet = Img(w * states, h)
+        for i in range(states):
+            frame = Img(w, h)
+            paint(frame, i)
+            sheet.blit(frame, i * w, 0)
+        sheet.save(os.path.join(ROOT, "props", f"{name}.png"))
+
+
 def manifest():
     data = {
         "canvas": [W, H],
@@ -193,6 +284,8 @@ def manifest():
             "animations": {n: {"row": i, "frames": len(fr), "fps": fps, "looping": loop} for i, (n, fps, loop, fr) in enumerate(ANIMS)},
         },
         "rooms": [{"id": n, "bg": f"rooms/{n}_bg.png", "fg": f"rooms/{n}_fg.png"} for n in ROOMS],
+        "props": [{"name": n, "sheet": f"props/{n}.png", "frame": list(fr), "states": st, "position": list(pos), "z": z}
+                  for n, fr, st, pos, z, _ in PROPS],
     }
     with open(os.path.join(ROOT, "manifest.json"), "w") as f:
         json.dump(data, f, indent=2)
@@ -202,5 +295,6 @@ if __name__ == "__main__":
     character()
     for n, p in ROOMS.items():
         room(n, p)
+    props()
     manifest()
     print("placeholders written to", os.path.abspath(ROOT))

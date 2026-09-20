@@ -2,20 +2,24 @@ import AppKit
 
 /// Owns every agent window, the corner stacks they dock into, and the single chat panel.
 final class AppController: NSObject, NSApplicationDelegate {
+    /// Stacks belong to a display, not an NSScreen object: AppKit replaces those when displays change.
     private struct StackKey: Hashable {
-        let screen: ObjectIdentifier
+        let display: CGDirectDisplayID
         let corner: Corner
     }
 
-    private enum Axis { case vertical, horizontal }
+    private typealias Axis = DockLayout.Axis
 
-    private static let margin: CGFloat = 12
-    private static let gap: CGFloat = 8
-    private static let scales: [CGFloat] = [2, 1.5, 1]
+    /// One stack's direction, in a form Persistence can save.
+    struct StackAxis: Codable, Equatable {
+        let display: UInt32
+        let corner: Int
+        let axis: DockLayout.Axis
+    }
 
     private var art: Art!
     private(set) var windows: [AgentWindow] = [] // array order is stack order, from the corner inward
-    private var homes: [ObjectIdentifier: NSScreen] = [:]
+    private var homes: [ObjectIdentifier: CGDirectDisplayID] = [:]
     private(set) var active: AgentWindow?
     private var axes: [StackKey: Axis] = [:]
     private var dragging: AgentWindow?
@@ -24,6 +28,13 @@ final class AppController: NSObject, NSApplicationDelegate {
     private var ticker: Timer?
     private var demo: DemoDriver?
     private var menu: NSMenu!
+    private var fixedScale = DockPrefs.fixedScale
+
+    /// Docked windows stay out of this rectangle (global screen coordinates). It is set to the chat
+    /// panel's frame while a conversation is open; the panel may update it if it moves or resizes.
+    var reservedBottomRect: NSRect? {
+        didSet { if reservedBottomRect != oldValue { layout(animated: true) } }
+    }
 
     /// Every optional capability plugs in here; each lives in its own file under Features/.
     private let features: [Feature] = [
@@ -46,6 +57,7 @@ final class AppController: NSObject, NSApplicationDelegate {
             NSApp.terminate(nil)
             return
         }
+        PixelFont.register(art.url("fonts/DepartureMono-Regular.otf"))
         chat.controller = self
         buildMenus()
 
@@ -62,8 +74,11 @@ final class AppController: NSObject, NSApplicationDelegate {
         ticker = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
             self?.windows.forEach { $0.session.tick(0.5) }
         }
+        ticker?.tolerance = 0.25 // state decay is not time critical; let the system batch the wake-ups
         NotificationCenter.default.addObserver(self, selector: #selector(screensChanged),
                                                name: NSApplication.didChangeScreenParametersNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(defaultsChanged),
+                                               name: UserDefaults.didChangeNotification, object: nil)
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -115,7 +130,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     /// `resume` continues an earlier Claude Code session; `corner` and `minimised` restore a saved layout.
     @discardableResult
     func addAgent(folder: URL?, label: String? = nil, resume: String? = nil,
-                  corner: Corner = .bottomRight, minimised: Bool = false) -> AgentWindow {
+                  corner: Corner = DockPrefs.defaultCorner, minimised: Bool = false) -> AgentWindow {
         let session = AgentSession(label: label ?? folder?.lastPathComponent ?? "agent", cwd: folder, resume: resume)
         let window = AgentWindow(session: session, art: art, roomIndex: windows.count)
         window.controller = self
@@ -126,6 +141,8 @@ final class AppController: NSObject, NSApplicationDelegate {
             self.changed(window)
         }
         windows.append(window)
+        // New agents appear on the screen you are working on, and then stay there.
+        homes[ObjectIdentifier(window)] = (NSScreen.main ?? NSScreen.screens[0]).displayID
         if active != nil { window.room.setDimmed(true) }
         layout(animated: false, only: window)
         window.orderFrontRegardless()
@@ -167,6 +184,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         }
         window.refresh()
         chat.present(window.session, on: screen(of: window))
+        reservedBottomRect = chat.frame
         NotificationCenter.default.post(name: .nookActiveChanged, object: self)
     }
 
@@ -177,6 +195,7 @@ final class AppController: NSObject, NSApplicationDelegate {
             w.room.setActive(false)
         }
         chat.orderOut(nil)
+        reservedBottomRect = nil
         NotificationCenter.default.post(name: .nookActiveChanged, object: self)
     }
 
@@ -216,37 +235,41 @@ final class AppController: NSObject, NSApplicationDelegate {
     @discardableResult
     private func place(_ window: AgentWindow) -> Bool {
         let mouse = NSEvent.mouseLocation
-        let screen = NSScreen.screens.first { $0.frame.contains(mouse) } ?? window.screen ?? NSScreen.screens[0]
+        let screen = NSScreen.screens.first { $0.frame.contains(mouse) } ?? self.screen(of: window)
         let area = screen.visibleFrame
         let centre = NSPoint(x: window.frame.midX, y: window.frame.midY)
         let right = centre.x > area.midX
         let bottom = centre.y < area.midY
         let corner: Corner = bottom ? (right ? .bottomRight : .bottomLeft) : (right ? .topRight : .topLeft)
-        let key = StackKey(screen: ObjectIdentifier(screen), corner: corner)
-        let neighbours = windows.filter { $0 !== window && $0.corner == corner && self.screen(of: $0) === screen }
+        let key = StackKey(display: screen.displayID, corner: corner)
+        let neighbours = windows.filter { $0 !== window && $0.corner == corner && homes[ObjectIdentifier($0)] == key.display }
 
         // Level with the corner window and off to its side: make a row. Above or below it: a column.
         var axis = axes[key] ?? .vertical
         if !neighbours.isEmpty {
             let size = NSSize(width: RoomScene.W * 2, height: RoomScene.H * 2)
-            let cx = right ? area.maxX - Self.margin - size.width / 2 : area.minX + Self.margin + size.width / 2
-            let cy = bottom ? area.minY + Self.margin + size.height / 2 : area.maxY - Self.margin - size.height / 2
+            let margin = DockLayout().margin
+            let cx = right ? area.maxX - margin - size.width / 2 : area.minX + margin + size.width / 2
+            let cy = bottom ? area.minY + margin + size.height / 2 : area.maxY - margin - size.height / 2
             let dx = abs(centre.x - cx) / size.width
             let dy = abs(centre.y - cy) / size.height
             if dy < 0.6, dx > 0.5 { axis = .horizontal } else if dx < 0.6, dy > 0.5 { axis = .vertical }
         }
 
-        let slots = frames(for: neighbours, corner: corner, axis: axis, area: area, shared: false).frames
-        let index = slots.filter { slot in
-            switch axis {
-            case .vertical: return bottom ? slot.midY < centre.y : slot.midY > centre.y
-            case .horizontal: return right ? slot.midX > centre.x : slot.midX < centre.x
-            }
-        }.count
+        // Lay the screen out as if the window had already landed at the end of that stack; the slot
+        // nearest to it is where it goes. This stays right when the stack is wrapped into lines.
+        var stacks = self.stacks(on: key.display, without: window)
+        stacks[corner, default: []].append(window)
+        var trial = axes
+        trial[key] = axis
+        let slots = solve(screen, stacks: stacks, axes: trial)[corner]?.frames ?? []
+        let index = slots.indices.min { a, b in
+            hypot(slots[a].midX - centre.x, slots[a].midY - centre.y) < hypot(slots[b].midX - centre.x, slots[b].midY - centre.y)
+        } ?? neighbours.count
 
         let before = windows.map(ObjectIdentifier.init)
-        let unchanged = window.corner == corner && axes[key] == axis && self.screen(of: window) === screen
-        homes[ObjectIdentifier(window)] = screen
+        let unchanged = window.corner == corner && axes[key] == axis && homes[ObjectIdentifier(window)] == key.display
+        homes[ObjectIdentifier(window)] = key.display
         window.corner = corner
         axes[key] = axis
         windows.removeAll { $0 === window }
@@ -259,85 +282,112 @@ final class AppController: NSObject, NSApplicationDelegate {
     }
 
     private func screen(of window: AgentWindow) -> NSScreen {
-        if let home = homes[ObjectIdentifier(window)], NSScreen.screens.contains(home) { return home }
-        return NSScreen.main ?? NSScreen.screens[0]
+        let home = homes[ObjectIdentifier(window)]
+        return NSScreen.screens.first { $0.displayID == home } ?? NSScreen.main ?? NSScreen.screens[0]
     }
 
     @objc private func screensChanged() { layout(animated: false) }
 
-    /// Slot rectangles for a stack, growing from its corner, at the largest scale that fits.
-    private func frames(for stack: [AgentWindow], corner: Corner, axis: Axis, area: NSRect, shared: Bool) -> (scale: CGFloat, frames: [NSRect]) {
-        func size(_ w: AgentWindow, _ s: CGFloat) -> NSSize {
-            NSSize(width: RoomScene.W * s, height: (w.minimised ? RoomScene.bar : RoomScene.H) * s)
-        }
-        func extent(_ w: AgentWindow, _ s: CGFloat) -> CGFloat { axis == .vertical ? size(w, s).height : size(w, s).width }
+    @objc private func defaultsChanged() {
+        // This fires for every preference in the app; only a new scale needs a fresh layout.
+        guard DockPrefs.fixedScale != fixedScale else { return }
+        fixedScale = DockPrefs.fixedScale
+        layout(animated: true)
+    }
 
-        let room = (axis == .vertical ? area.height : area.width) - Self.margin * 2
-        let budget = room * (shared ? 0.5 : 1)
-        let scale = Self.scales.first { s in
-            stack.reduce(0) { $0 + extent($1, s) } + Self.gap * CGFloat(max(stack.count - 1, 0)) <= budget
-        } ?? Self.scales.last!
-
-        var offset = Self.margin
-        var result: [NSRect] = []
-        for w in stack {
-            let sz = size(w, scale)
-            let along = offset
-            offset += extent(w, scale) + Self.gap
-            let x: CGFloat
-            let y: CGFloat
-            switch axis {
-            case .vertical:
-                x = corner.isRight ? area.maxX - Self.margin - sz.width : area.minX + Self.margin
-                y = corner.isBottom ? area.minY + along : area.maxY - along - sz.height
-            case .horizontal:
-                x = corner.isRight ? area.maxX - along - sz.width : area.minX + along
-                y = corner.isBottom ? area.minY + Self.margin : area.maxY - Self.margin - sz.height
-            }
-            result.append(NSRect(origin: NSPoint(x: x, y: y), size: sz))
+    /// Windows whose display was unplugged move to the main screen. Array order is untouched, so
+    /// they keep their order and join the end of whatever stack is already in that corner.
+    private func adoptOrphans() {
+        let present = Set(NSScreen.screens.map(\.displayID))
+        let main = (NSScreen.main ?? NSScreen.screens[0]).displayID
+        var moved = false
+        for w in windows where !present.contains(homes[ObjectIdentifier(w)] ?? 0) {
+            let old = StackKey(display: homes[ObjectIdentifier(w)] ?? 0, corner: w.corner)
+            let new = StackKey(display: main, corner: w.corner)
+            if axes[new] == nil { axes[new] = axes[old] }
+            homes[ObjectIdentifier(w)] = main
+            moved = true
         }
-        return (scale, result)
+        if moved { NotificationCenter.default.post(name: .nookAgentsChanged, object: self) }
+    }
+
+    private func stacks(on display: CGDirectDisplayID, without skipped: AgentWindow? = nil) -> [Corner: [AgentWindow]] {
+        var result: [Corner: [AgentWindow]] = [:]
+        for w in windows where w !== skipped && homes[ObjectIdentifier(w)] == display {
+            result[w.corner, default: []].append(w)
+        }
+        return result
+    }
+
+    /// The maths lives in DockLayout; this only feeds it one screen's numbers.
+    private func solve(_ screen: NSScreen, stacks: [Corner: [AgentWindow]], axes: [StackKey: Axis]) -> [Corner: DockLayout.Placement] {
+        var engine = DockLayout(canvas: CGSize(width: RoomScene.W, height: RoomScene.H), bar: RoomScene.bar)
+        if let fixedScale {
+            // The user's scale holds while wrapping can make it fit; smaller scales are a last resort.
+            engine.scales = [fixedScale]
+            engine.fallbackScales = [2, 1.5, 1].filter { $0 < fixedScale }
+        } else {
+            // Art pixels must be whole device pixels: 1.5x is only crisp on a Retina display.
+            let backing = screen.backingScaleFactor
+            engine.scales = [2, 1.5, 1].filter { ($0 * backing).truncatingRemainder(dividingBy: 1) == 0 }
+        }
+        let specs = stacks.map { corner, members in
+            DockLayout.Stack(corner: corner, axis: axes[StackKey(display: screen.displayID, corner: corner)] ?? .vertical,
+                             minimised: members.map(\.minimised))
+        }
+        let reserved = reservedBottomRect.flatMap { screen.frame.intersects($0) ? $0 : nil }
+        return engine.solve(area: screen.visibleFrame, stacks: specs, reserved: reserved)
     }
 
     private func layout(animated: Bool, only: AgentWindow? = nil) {
-        var stacks: [StackKey: [AgentWindow]] = [:]
-        for w in windows {
-            stacks[StackKey(screen: ObjectIdentifier(screen(of: w)), corner: w.corner), default: []].append(w)
-        }
-        for (key, stack) in stacks {
-            guard let first = stack.first else { continue }
-            let axis = axes[key] ?? .vertical
-            // Two stacks running toward each other along the same edge split the space.
-            let facing: Corner
-            switch (axis, key.corner) {
-            case (.vertical, .bottomRight): facing = .topRight
-            case (.vertical, .topRight): facing = .bottomRight
-            case (.vertical, .bottomLeft): facing = .topLeft
-            case (.vertical, .topLeft): facing = .bottomLeft
-            case (.horizontal, .bottomRight): facing = .bottomLeft
-            case (.horizontal, .bottomLeft): facing = .bottomRight
-            case (.horizontal, .topRight): facing = .topLeft
-            case (.horizontal, .topLeft): facing = .topRight
-            }
-            let facingKey = StackKey(screen: key.screen, corner: facing)
-            let shared = stacks[facingKey] != nil && (axes[facingKey] ?? .vertical) == axis
-
-            let (scale, slots) = frames(for: stack, corner: key.corner, axis: axis, area: screen(of: first).visibleFrame, shared: shared)
-            for (w, frame) in zip(stack, slots) {
-                guard only == nil || only === w else { continue }
-                guard w !== dragging else { continue } // it follows the mouse; its slot stays open
-                w.room.configure(scale: scale, minimised: w.minimised)
-                if animated {
-                    NSAnimationContext.runAnimationGroup { context in
-                        context.duration = 0.18
-                        context.timingFunction = CAMediaTimingFunction(name: .easeOut)
-                        w.animator().setFrame(frame, display: true)
+        guard !NSScreen.screens.isEmpty else { return }
+        adoptOrphans()
+        for screen in NSScreen.screens {
+            let stacks = self.stacks(on: screen.displayID)
+            let solved = solve(screen, stacks: stacks, axes: axes)
+            for (corner, members) in stacks {
+                guard let placement = solved[corner] else { continue }
+                for (w, frame) in zip(members, placement.frames) {
+                    guard only == nil || only === w else { continue }
+                    guard w !== dragging else { continue } // it follows the mouse; its slot stays open
+                    w.room.configure(scale: placement.scale, minimised: w.minimised)
+                    guard w.frame != frame else { continue }
+                    if animated {
+                        NSAnimationContext.runAnimationGroup { context in
+                            context.duration = 0.18
+                            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                            w.animator().setFrame(frame, display: true)
+                        }
+                    } else {
+                        w.setFrame(frame, display: true)
                     }
-                } else {
-                    w.setFrame(frame, display: true)
                 }
             }
         }
+    }
+
+    // MARK: saved layout (used by Persistence)
+
+    var stackAxes: [StackAxis] {
+        get {
+            axes.map { StackAxis(display: $0.key.display, corner: $0.key.corner.rawValue, axis: $0.value) }
+                .sorted { ($0.display, $0.corner) < ($1.display, $1.corner) }
+        }
+        set {
+            for item in newValue {
+                guard let corner = Corner(rawValue: item.corner) else { continue }
+                axes[StackKey(display: item.display, corner: corner)] = item.axis
+            }
+            layout(animated: false)
+        }
+    }
+
+    func display(of window: AgentWindow) -> UInt32 { homes[ObjectIdentifier(window)] ?? 0 }
+
+    /// Puts a restored window back on its display. An unknown display falls back to the main screen.
+    func move(_ window: AgentWindow, toDisplay display: UInt32) {
+        homes[ObjectIdentifier(window)] = display
+        layout(animated: false)
     }
 
     // MARK: demo
@@ -388,6 +438,40 @@ final class DemoDriver {
         if cursor >= script.count, clock > 60 {
             clock = 0
             cursor = 0
+        }
+    }
+}
+
+extension NSScreen {
+    /// Stable for as long as the display stays connected, unlike the NSScreen object itself.
+    var displayID: CGDirectDisplayID {
+        (deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value ?? 0
+    }
+}
+
+/// Docking preferences. The settings window writes them; this file only reads.
+enum DockPrefs {
+    /// "auto", "1x", "1.5x" or "2x" (a bare number works too).
+    static let scaleKey = "nook.scale"
+    /// "bottomRight", "bottomLeft", "topRight" or "topLeft" (or the Corner raw value).
+    static let cornerKey = "nook.defaultCorner"
+
+    /// nil means auto: as large as fits.
+    static var fixedScale: CGFloat? {
+        let raw = UserDefaults.standard.object(forKey: scaleKey)
+        let number = (raw as? NSNumber)?.doubleValue
+            ?? (raw as? String).flatMap { Double($0.lowercased().replacingOccurrences(of: "x", with: "")) }
+        return number.flatMap { [1, 1.5, 2].contains($0) ? CGFloat($0) : nil }
+    }
+
+    static var defaultCorner: Corner {
+        let raw = UserDefaults.standard.object(forKey: cornerKey)
+        if let number = raw as? NSNumber, let corner = Corner(rawValue: number.intValue) { return corner }
+        switch (raw as? String)?.lowercased().filter(\.isLetter) {
+        case "bottomleft": return .bottomLeft
+        case "topright": return .topRight
+        case "topleft": return .topLeft
+        default: return .bottomRight
         }
     }
 }
