@@ -1,7 +1,6 @@
 import AppKit
 import Carbon.HIToolbox
 
-/// REPLACE ME: the control engineer's shared `HotkeyCenter` should take over from `CarbonHotkeys`.
 /// Capture and Handoff only ever talk to this protocol, through `GlobalHotkeys.shared`.
 protocol HotkeyRegistering: AnyObject {
     /// Registers (or re-registers) the global hotkey called `name`. Returns false if the system refused it.
@@ -10,8 +9,7 @@ protocol HotkeyRegistering: AnyObject {
 }
 
 enum GlobalHotkeys {
-    /// The one line to change when HotkeyCenter lands.
-    static let shared: HotkeyRegistering = CarbonHotkeys()
+    static let shared: HotkeyRegistering = SharedHotkeys()
 }
 
 /// A key plus modifiers, stored in preferences as text such as "ctrl+opt+r".
@@ -78,45 +76,20 @@ struct HotkeySpec: Equatable {
     }
 }
 
-/// Minimal Carbon registration. Needs no permission and costs nothing while idle.
-private final class CarbonHotkeys: HotkeyRegistering {
-    private static let signature: OSType = 0x4E4F_4F4B // "NOOK"
-    private static var handlers: [UInt32: () -> Void] = [:]
-
-    private var refs: [String: (id: UInt32, ref: EventHotKeyRef)] = [:]
-    private var nextID: UInt32 = 1
-    private var installed = false
+/// Routes Capture and Handoff shortcuts through the shared HotkeyCenter, so they appear in
+/// Settings > Hotkeys and cannot collide with the other features' shortcuts.
+private final class SharedHotkeys: HotkeyRegistering {
+    private static let titles = [
+        "capture.region": "Look at a region",
+        "capture.window": "Look at the front window",
+        "capture.screen": "Look at the screen",
+        "broadcast": "Broadcast to agents",
+    ]
 
     func register(_ name: String, _ key: HotkeySpec, handler: @escaping () -> Void) -> Bool {
-        installHandlerOnce()
-        if let old = refs.removeValue(forKey: name) {
-            UnregisterEventHotKey(old.ref)
-            Self.handlers[old.id] = nil
-        }
-        let id = nextID
-        nextID += 1
-        var ref: EventHotKeyRef?
-        let status = RegisterEventHotKey(key.keyCode, key.carbonModifiers,
-                                         EventHotKeyID(signature: Self.signature, id: id),
-                                         GetApplicationEventTarget(), 0, &ref)
-        guard status == noErr, let ref else { return false }
-        refs[name] = (id, ref)
-        Self.handlers[id] = handler
-        return true
-    }
-
-    private func installHandlerOnce() {
-        guard !installed else { return }
-        installed = true
-        var spec = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
-        InstallEventHandler(GetApplicationEventTarget(), { _, event, _ in
-            var id = EventHotKeyID()
-            let status = GetEventParameter(event, EventParamName(kEventParamDirectObject), EventParamType(typeEventHotKeyID),
-                                           nil, MemoryLayout<EventHotKeyID>.size, nil, &id)
-            if status == noErr, id.signature == CarbonHotkeys.signature {
-                CarbonHotkeys.handlers[id.id]?()
-            }
-            return noErr
-        }, 1, &spec, nil, nil)
+        HotkeyCenter.shared.register(id: name, title: Self.titles[name] ?? name,
+                                     defaultCombo: KeyCombo(keyCode: key.keyCode, modifiers: key.carbonModifiers),
+                                     onPress: handler)
+        return HotkeyCenter.shared.info(for: name)?.problem == nil
     }
 }

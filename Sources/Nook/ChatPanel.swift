@@ -326,7 +326,7 @@ final class ChatPanel: NSPanel {
         chipRow.isHidden = titles.isEmpty
     }
 
-    private func attach(_ urls: [URL]) {
+    fileprivate func attach(_ urls: [URL]) {
         attachments += urls.filter { !attachments.contains($0) }
         showAttachments()
         makeKey()
@@ -366,4 +366,9 @@ final class ChatPanel: NSPanel {
 
     @objc private func allowTapped() { controller?.answerActive(allow: true) }
     @objc private func denyTapped() { controller?.answerActive(allow: false) }
+}
+
+/// Files dropped on an agent window or grabbed from the screen wait here as chips until sent.
+extension ChatPanel: AttachmentStaging {
+    func stage(_ urls: [URL]) { attach(urls) }
 }
