@@ -15,10 +15,19 @@ final class AgentWindow: NSPanel {
     weak var controller: AppController?
 
     var corner: Corner = .bottomRight
+    /// Minimised windows are orbs: a small square showing the agent's portrait in a disc.
     var minimised = false
+    /// The scene of the theme this window shows (an id from `Art.sceneChoices`); nil leaves the scene's own default.
+    private(set) var scene: String?
 
     private let skView = SKView()
+    private let surface = InteractionView()
     private let dropHighlight = DropHighlightView()
+    private var neighbours = Set<RoomScene.Edge>()
+    /// What the scene currently draws; trails `minimised` while the change between chamber and orb fades.
+    private var shownMinimised = false
+    private var fading = false
+    private var destination: (frame: NSRect, scale: CGFloat)?
 
     init(session: AgentSession, art: Art, roomIndex: Int) {
         self.session = session
@@ -39,7 +48,6 @@ final class AgentWindow: NSPanel {
         skView.preferredFramesPerSecond = 15 // pixel animation tops out at 8 fps
         skView.presentScene(room)
 
-        let surface = InteractionView()
         surface.owner = self
         skView.autoresizingMask = [.width, .height]
         surface.autoresizingMask = [.width, .height]
@@ -64,6 +72,74 @@ final class AgentWindow: NSPanel {
         room.show(state: session.state, bubble: quiet ? "" : session.bubble, unread: session.unread)
         room.showVitals(contextFraction: Double(session.contextTokens) / Double(max(session.contextLimit, 1)),
                         cost: session.costUSD, changedFiles: session.changedFiles, turnStarted: session.turnStarted)
+        refreshToolTip()
+    }
+
+    private func refreshToolTip() {
+        let tip = shownMinimised ? WindowChrome.tooltip(label: session.label, state: session.state,
+                                                        waitingForPermission: session.pending != nil, summary: session.summary) : nil
+        if surface.toolTip != tip { surface.toolTip = tip }
+    }
+
+    func setScene(_ id: String) {
+        guard id != scene else { return }
+        scene = id
+        room.setScene(id)
+    }
+
+    /// The edges that touch another chamber. The scene only hears about it when the set changes.
+    func setNeighbours(_ edges: Set<RoomScene.Edge>) {
+        guard edges != neighbours else { return }
+        neighbours = edges
+        room.setNeighbours(edges)
+    }
+
+    // MARK: docking
+
+    /// Moves to a docked frame. A change between chamber and orb fades out, swaps what the scene
+    /// draws, then fades in while the frame moves, so the contents never stretch. The scene fills
+    /// the window from its bottom left at a fixed scale, which keeps it undistorted mid-animation.
+    func dock(to frame: NSRect, scale: CGFloat, animated: Bool) {
+        let animated = animated && isVisible && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        destination = (frame, scale)
+        guard !fading else { return } // the fade in progress picks up the newest destination
+        guard minimised != shownMinimised, animated else { return settle(animated: animated, duration: 0.18) }
+        fading = true
+        NSAnimationContext.runAnimationGroup({ context in
+            context.duration = 0.06
+            animator().alphaValue = 0
+        }, completionHandler: { [weak self] in
+            self?.fading = false
+            self?.settle(animated: true, duration: 0.10)
+        })
+    }
+
+    private func settle(animated: Bool, duration: TimeInterval) {
+        guard let (frame, scale) = destination else { return }
+        destination = nil
+        if shownMinimised != minimised {
+            shownMinimised = minimised
+            // AppKit cuts a borderless panel's shadow from its contents, but whether it samples a
+            // Metal-drawn SKView could not be checked without a screen, and a square shadow around
+            // a disc is worse than none. So the orb has no window shadow; the scene draws its rim.
+            hasShadow = !minimised
+            dropHighlight.isRound = minimised
+            refreshToolTip()
+        }
+        room.configure(scale: scale, minimised: minimised)
+        guard animated else {
+            alphaValue = 1
+            if self.frame != frame { setFrame(frame, display: true) }
+            invalidateShadow()
+            return
+        }
+        guard self.frame != frame || alphaValue != 1 else { return }
+        NSAnimationContext.runAnimationGroup({ context in
+            context.duration = duration
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            animator().alphaValue = 1
+            animator().setFrame(frame, display: true)
+        }, completionHandler: { [weak self] in self?.invalidateShadow() })
     }
 
     /// Shown while a desktop drag or a handoff hovers over this window.
@@ -76,12 +152,11 @@ final class AgentWindow: NSPanel {
     }
 
     fileprivate func clicked(at point: NSPoint, in size: NSSize) {
-        let s = size.width / RoomScene.W
-        let onMinimise = point.y > size.height - RoomScene.bar * s && point.x > size.width - 14 * s
-        if minimised || onMinimise {
-            controller?.toggleMinimise(self)
-        } else {
-            controller?.activate(self)
+        switch WindowChrome.hit(point, in: size, minimised: minimised) {
+        case .close: controller?.requestClose(self)
+        case .minimise, .restore: controller?.toggleMinimise(self)
+        case .body: controller?.activate(self)
+        case .outside: break
         }
     }
 
@@ -94,6 +169,21 @@ final class AgentWindow: NSPanel {
         }
         menu.addItem(item(minimised ? "Restore" : "Minimise", #selector(toggleMinimise)))
         menu.addItem(item("Interrupt", #selector(interrupt)))
+        let scenes = controller?.art.sceneChoices ?? []
+        if !scenes.isEmpty {
+            let pick = NSMenuItem(title: "Scene", action: nil, keyEquivalent: "")
+            let submenu = NSMenu()
+            for choice in scenes {
+                let entry = ClosureItem(choice.name) { [weak self] in
+                    guard let self else { return }
+                    self.controller?.setScene(choice.id, for: self)
+                }
+                entry.state = choice.id == scene ? .on : .off
+                submenu.addItem(entry)
+            }
+            pick.submenu = submenu
+            menu.addItem(pick)
+        }
         menu.addItem(.separator())
         menu.addItem(item(GrabMode.region.title, #selector(lookAtRegion)))
         let others = controller?.windows.filter { $0 !== self } ?? []
@@ -129,7 +219,7 @@ final class AgentWindow: NSPanel {
     @objc private func deny() { controller?.answer(self, allow: false) }
     @objc private func toggleMinimise() { controller?.toggleMinimise(self) }
     @objc private func interrupt() { session.interrupt() }
-    @objc private func closeAgent() { controller?.close(self) }
+    @objc private func closeAgent() { controller?.requestClose(self) }
 
     private var lastReply: String? { session.transcript.last { $0.kind == .assistant }?.text }
 
@@ -157,6 +247,14 @@ final class AgentWindow: NSPanel {
 
 /// The drop target look: an accent frame and a faint wash. Never takes the mouse.
 private final class DropHighlightView: NSView {
+    /// Follows the orb's disc instead of the chamber's rectangle.
+    var isRound = false { didSet { needsLayout = true } }
+
+    override func layout() {
+        super.layout()
+        layer?.cornerRadius = isRound ? min(bounds.width, bounds.height) / 2 : 4
+    }
+
     override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true
@@ -187,6 +285,12 @@ private final class InteractionView: NSView {
     required init?(coder: NSCoder) { fatalError("not used") }
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    /// An orb's transparent corners are not part of the window: clicks there are not ours.
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard let owner, owner.minimised, let superview else { return super.hitTest(point) }
+        return WindowChrome.inOrb(convert(point, from: superview), size: bounds.size) ? self : nil
+    }
 
     override func mouseDown(with event: NSEvent) {
         guard let owner else { return }

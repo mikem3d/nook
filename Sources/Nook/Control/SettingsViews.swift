@@ -10,6 +10,9 @@ enum SettingsKeys {
     static let defaultCorner = "nook.defaultCorner"
     /// "auto", "1", "1.5" or "2".
     static let scale = "nook.scale"
+    /// The art theme's id, and which of its scenes new agents get (see `ScenePrefs`).
+    static let theme = ScenePrefs.themeKey
+    static let newAgentScene = ScenePrefs.newAgentKey
     static let voiceEnabled = "nook.voice.enabled"
     /// A locale identifier such as "en-GB"; empty follows the system.
     static let voiceLocale = "nook.voice.locale"
@@ -23,10 +26,15 @@ struct GeneralSettings: View {
     @AppStorage(SettingsKeys.model) private var model = ""
     @AppStorage(SettingsKeys.defaultCorner) private var corner = Corner.bottomRight.rawValue
     @AppStorage(SettingsKeys.scale) private var scale = "auto"
+    @AppStorage(SettingsKeys.theme) private var theme = ScenePrefs.defaultTheme
+    @AppStorage(SettingsKeys.newAgentScene) private var newAgentScene = ScenePrefs.rotate
     @State private var launchAtLogin = LoginItem.isEnabled
     @State private var loginError = ""
 
     private static let models = ["opus", "sonnet", "haiku"]
+    /// One theme ships today; the popup is here so a second one only needs an entry.
+    private static let themes = [(id: ScenePrefs.defaultTheme, name: "Dwarven Mountain")]
+    private let scenes = (NSApp.delegate as? AppController)?.art?.sceneChoices ?? []
 
     var body: some View {
         Form {
@@ -55,6 +63,18 @@ struct GeneralSettings: View {
                 Text("Model and corner apply to agents you start from now on.").settingsNote()
             }
             Section {
+                Picker("Theme", selection: $theme) {
+                    ForEach(Self.themes, id: \.id) { Text($0.name).tag($0.id) }
+                }
+                Picker("New agents get", selection: $newAgentScene) {
+                    Text("Each scene in turn").tag(ScenePrefs.rotate)
+                    if !scenes.isEmpty { Divider() }
+                    ForEach(scenes, id: \.id) { Text("Always the \($0.name.lowercased())").tag($0.id) }
+                }
+            } footer: {
+                Text("Right-click a window and choose Scene to change the one it has.").settingsNote()
+            }
+            Section {
                 Toggle("Launch Nook at login", isOn: $launchAtLogin)
                     .disabled(!LoginItem.isAvailable)
                     .onChange(of: launchAtLogin) { _, wanted in
@@ -76,7 +96,7 @@ struct GeneralSettings: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: paneWidth, height: 330)
+        .frame(width: paneWidth, height: 450)
     }
 }
 
