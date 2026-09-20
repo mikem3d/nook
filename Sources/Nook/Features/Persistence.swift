@@ -13,6 +13,8 @@ final class Persistence: Feature {
         let order: Int
         let minimised: Bool
         let display: UInt32?
+        /// Added later: older state files have none, and the new-agent preference picks one.
+        var scene: String?
     }
 
     struct SavedState: Codable, Equatable {
@@ -75,21 +77,37 @@ final class Persistence: Feature {
         app.stackAxes = state.axes
         for agent in Self.restorable(state) {
             let window = app.addAgent(folder: URL(fileURLWithPath: agent.folder), label: agent.label, resume: agent.sessionID,
-                                      corner: Corner(rawValue: agent.corner) ?? .bottomRight, minimised: agent.minimised)
+                                      corner: Corner(rawValue: agent.corner) ?? .bottomRight, minimised: agent.minimised,
+                                      scene: agent.scene)
             if let display = agent.display { app.move(window, toDisplay: display) }
         }
     }
 
     // MARK: save
 
+    static func saved(_ window: AgentWindow, order: Int, in app: AppController) -> SavedAgent {
+        SavedAgent(folder: window.session.cwd?.path ?? "", label: window.session.label, sessionID: window.session.sessionID,
+                   corner: window.corner.rawValue, order: order, minimised: window.minimised, display: app.display(of: window),
+                   scene: window.scene)
+    }
+
     static func snapshot(of app: AppController) -> SavedState {
         // Demo agents have no folder and are never saved.
         let real = app.windows.filter { $0.session.cwd != nil }
-        let agents = real.enumerated().map { order, window in
-            SavedAgent(folder: window.session.cwd?.path ?? "", label: window.session.label, sessionID: window.session.sessionID,
-                       corner: window.corner.rawValue, order: order, minimised: window.minimised, display: app.display(of: window))
+        let open = real.enumerated().map { order, window in saved(window, order: order, in: app) }
+        return SavedState(agents: merge(open: open, closed: app.recentlyClosed), axes: app.stackAxes)
+    }
+
+    /// A just-closed agent stays saved, at the place it was closed from, until its undo offer runs out.
+    static func merge(open: [SavedAgent], closed: [SavedAgent]) -> [SavedAgent] {
+        var all = open
+        for agent in closed.sorted(by: { $0.order < $1.order }) where !agent.folder.isEmpty {
+            all.insert(agent, at: min(agent.order, all.count))
         }
-        return SavedState(agents: agents, axes: app.stackAxes)
+        return all.enumerated().map { order, a in
+            SavedAgent(folder: a.folder, label: a.label, sessionID: a.sessionID, corner: a.corner, order: order,
+                       minimised: a.minimised, display: a.display, scene: a.scene)
+        }
     }
 
     /// Session changes arrive in bursts while an agent streams; one timer collects them.

@@ -17,7 +17,8 @@ final class AppController: NSObject, NSApplicationDelegate {
         let axis: DockLayout.Axis
     }
 
-    private var art: Art!
+    /// Read-only for the chrome and the settings window (scene choices); nil only before launch finishes.
+    private(set) var art: Art!
     private(set) var windows: [AgentWindow] = [] // array order is stack order, from the corner inward
     private var homes: [ObjectIdentifier: CGDirectDisplayID] = [:]
     private(set) var active: AgentWindow?
@@ -29,6 +30,9 @@ final class AppController: NSObject, NSApplicationDelegate {
     private var demo: DemoDriver?
     private var menu: NSMenu!
     private var fixedScale = DockPrefs.fixedScale
+    private var closeUndo = CloseUndo()
+    private var closeExpiry: DispatchWorkItem?
+    private var keyMonitor: Any?
 
     /// Docked windows stay out of this rectangle (global screen coordinates). It is set to the chat
     /// panel's frame while a conversation is open; the panel may update it if it moves or resizes.
@@ -75,6 +79,15 @@ final class AppController: NSObject, NSApplicationDelegate {
             self?.windows.forEach { $0.session.tick(0.5) }
         }
         ticker?.tolerance = 0.25 // state decay is not time critical; let the system batch the wake-ups
+        // ⌘W closes the active agent, but only while the chat panel has the keyboard. A menu key
+        // equivalent would fight the settings window's own ⌘W, so this looks at key presses instead.
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self, self.chat.isKeyWindow, let active = self.active,
+                  event.modifierFlags.intersection([.command, .shift, .option, .control]) == [.command],
+                  event.charactersIgnoringModifiers?.lowercased() == "w" else { return event }
+            self.requestClose(active)
+            return nil
+        }
         NotificationCenter.default.addObserver(self, selector: #selector(screensChanged),
                                                name: NSApplication.didChangeScreenParametersNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(defaultsChanged),
@@ -91,6 +104,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         menu = NSMenu()
         menu.addItem(withTitle: "New Agent…", action: #selector(newAgent), keyEquivalent: "n").target = self
         menu.addItem(withTitle: "Add Demo Agents", action: #selector(startDemo), keyEquivalent: "").target = self
+        menu.addItem(withTitle: "Close All Agents…", action: #selector(closeAllAgents), keyEquivalent: "").target = self
         menu.addItem(.separator())
         menu.addItem(withTitle: "Quit Nook", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         statusItem.menu = menu
@@ -127,15 +141,20 @@ final class AppController: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// `resume` continues an earlier Claude Code session; `corner` and `minimised` restore a saved layout.
+    /// `resume` continues an earlier Claude Code session; `corner`, `minimised` and `scene` restore a
+    /// saved layout. Without a `scene` the new-agent preference picks one (rotating by default).
     @discardableResult
     func addAgent(folder: URL?, label: String? = nil, resume: String? = nil,
-                  corner: Corner = DockPrefs.defaultCorner, minimised: Bool = false) -> AgentWindow {
+                  corner: Corner = DockPrefs.defaultCorner, minimised: Bool = false, scene: String? = nil) -> AgentWindow {
         let session = AgentSession(label: label ?? folder?.lastPathComponent ?? "agent", cwd: folder, resume: resume)
         let window = AgentWindow(session: session, art: art, roomIndex: windows.count)
         window.controller = self
         window.corner = corner
         window.minimised = minimised
+        let choices = art.sceneChoices.map(\.id)
+        let wanted = scene.flatMap { choices.contains($0) ? $0 : nil } // a saved scene the theme no longer has
+            ?? ScenePrefs.scene(forNew: windows.count, choices: choices, preference: UserDefaults.standard.string(forKey: ScenePrefs.newAgentKey))
+        if let wanted { window.setScene(wanted) }
         session.onChange = { [weak self, weak window] in
             guard let self, let window else { return }
             self.changed(window)
@@ -153,15 +172,83 @@ final class AppController: NSObject, NSApplicationDelegate {
         return window
     }
 
-    func close(_ window: AgentWindow) {
-        if active === window { deactivate() }
-        window.session.onChange = nil
-        window.session.stop()
-        windows.removeAll { $0 === window }
-        homes[ObjectIdentifier(window)] = nil
-        window.orderOut(nil)
+    /// Closes at once and offers undo. The user-facing paths go through `requestClose`, which asks first when it matters.
+    func close(_ window: AgentWindow) { close([window]) }
+
+    /// Closing an agent that is mid-turn or waiting for a permission asks first; an idle one just goes.
+    func requestClose(_ window: AgentWindow) {
+        let session = window.session
+        guard CloseUndo.needsConfirmation(state: session.state, hasPending: session.pending != nil,
+                                          turnInProgress: session.turnStarted != nil) else { return close(window) }
+        let detail = session.pending != nil ? "It is waiting for a permission." : "It is in the middle of a turn."
+        ClosePrompt.shared.ask("Close \(session.label)?", detail: detail, confirmTitle: "Close Agent", near: window.frame) { [weak self, weak window] in
+            guard let self, let window, self.windows.contains(where: { $0 === window }) else { return }
+            self.close(window)
+        }
+    }
+
+    @objc private func closeAllAgents() {
+        guard !windows.isEmpty else { return }
+        let busy = windows.filter { $0.session.state.busy || $0.session.pending != nil }.count
+        let detail = busy == 0 ? "" : busy == 1 ? "One is still working." : "\(busy) are still working."
+        let title = windows.count == 1 ? "Close the agent?" : "Close all \(windows.count) agents?"
+        ClosePrompt.shared.ask(title, detail: detail, confirmTitle: "Close All", near: nil) { [weak self] in
+            guard let self else { return }
+            self.close(self.windows)
+        }
+    }
+
+    private func close(_ closing: [AgentWindow]) {
+        guard !closing.isEmpty else { return }
+        let records = closing.map { Persistence.saved($0, order: windows.firstIndex(of: $0) ?? windows.count, in: self) }
+        if let active, closing.contains(active) { deactivate() }
+        for window in closing {
+            window.session.onChange = nil
+            window.session.stop()
+            homes[ObjectIdentifier(window)] = nil
+            window.orderOut(nil)
+        }
+        windows.removeAll { closing.contains($0) }
+        layout(animated: true)
+
+        // The agents stay in the saved state until the undo offer runs out (see CloseUndo).
+        closeUndo.closed(records, at: Date())
+        closeExpiry?.cancel()
+        let expiry = DispatchWorkItem { [weak self] in
+            guard let self, self.closeUndo.expire() else { return }
+            NotificationCenter.default.post(name: .nookAgentsChanged, object: self)
+        }
+        closeExpiry = expiry
+        DispatchQueue.main.asyncAfter(deadline: .now() + CloseUndo.window, execute: expiry)
+        let title = closing.count == 1 ? "Closed \(closing[0].session.label)" : "Closed \(closing.count) agents"
+        ClosePrompt.shared.offer(title, button: "Undo", for: CloseUndo.window, near: closing.count == 1 ? closing[0].frame : nil) { [weak self] in
+            self?.undoClose()
+        }
+        NotificationCenter.default.post(name: .nookAgentsChanged, object: self)
+    }
+
+    /// Closed agents that can still come back; Persistence keeps saving them until they cannot.
+    var recentlyClosed: [Persistence.SavedAgent] { closeUndo.held }
+
+    /// Reopens what was just closed, where it was, resuming the same Claude sessions.
+    private func undoClose() {
+        closeExpiry?.cancel()
+        closeExpiry = nil
+        for agent in closeUndo.undo(at: Date()) {
+            let window = addAgent(folder: agent.folder.isEmpty ? nil : URL(fileURLWithPath: agent.folder), label: agent.label,
+                                  resume: agent.sessionID, corner: Corner(rawValue: agent.corner) ?? .bottomRight,
+                                  minimised: agent.minimised, scene: agent.scene)
+            if let display = agent.display, display != 0 { homes[ObjectIdentifier(window)] = display }
+            windows.removeLast()
+            windows.insert(window, at: min(agent.order, windows.count))
+        }
         layout(animated: true)
         NotificationCenter.default.post(name: .nookAgentsChanged, object: self)
+    }
+
+    func setScene(_ id: String, for window: AgentWindow) {
+        window.setScene(id)
+        NotificationCenter.default.post(name: .nookAgentsChanged, object: self) // saved with the layout
     }
 
     private func changed(_ window: AgentWindow) {
@@ -206,6 +293,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     func toggleMinimise(_ window: AgentWindow) {
         window.minimised.toggle()
         layout(animated: true)
+        NotificationCenter.default.post(name: .nookAgentsChanged, object: self) // saved with the layout
     }
 
     // MARK: docking
@@ -217,6 +305,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     func willDrag(_ window: AgentWindow) {
         dragging = window
         window.orderFrontRegardless()
+        layout(animated: true) // nothing moves yet, but the chambers it leaves seal their connectors
     }
 
     /// Called continuously during a drag: the other windows make room where this one would land.
@@ -321,7 +410,7 @@ final class AppController: NSObject, NSApplicationDelegate {
 
     /// The maths lives in DockLayout; this only feeds it one screen's numbers.
     private func solve(_ screen: NSScreen, stacks: [Corner: [AgentWindow]], axes: [StackKey: Axis]) -> [Corner: DockLayout.Placement] {
-        var engine = DockLayout(canvas: CGSize(width: RoomScene.W, height: RoomScene.H), bar: RoomScene.bar)
+        var engine = DockLayout(canvas: CGSize(width: RoomScene.W, height: RoomScene.H))
         if let fixedScale {
             // The user's scale holds while wrapping can make it fit; smaller scales are a last resort.
             engine.scales = [fixedScale]
@@ -331,6 +420,7 @@ final class AppController: NSObject, NSApplicationDelegate {
             let backing = screen.backingScaleFactor
             engine.scales = [2, 1.5, 1].filter { ($0 * backing).truncatingRemainder(dividingBy: 1) == 0 }
         }
+        engine.orb = RoomScene.orb
         let specs = stacks.map { corner, members in
             DockLayout.Stack(corner: corner, axis: axes[StackKey(display: screen.displayID, corner: corner)] ?? .vertical,
                              minimised: members.map(\.minimised))
@@ -342,28 +432,26 @@ final class AppController: NSObject, NSApplicationDelegate {
     private func layout(animated: Bool, only: AgentWindow? = nil) {
         guard !NSScreen.screens.isEmpty else { return }
         adoptOrphans()
+        var chambers: [(window: AgentWindow, frame: CGRect)] = []
         for screen in NSScreen.screens {
             let stacks = self.stacks(on: screen.displayID)
             let solved = solve(screen, stacks: stacks, axes: axes)
             for (corner, members) in stacks {
                 guard let placement = solved[corner] else { continue }
                 for (w, frame) in zip(members, placement.frames) {
-                    guard only == nil || only === w else { continue }
-                    guard w !== dragging else { continue } // it follows the mouse; its slot stays open
-                    w.room.configure(scale: placement.scale, minimised: w.minimised)
-                    guard w.frame != frame else { continue }
-                    if animated {
-                        NSAnimationContext.runAnimationGroup { context in
-                            context.duration = 0.18
-                            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
-                            w.animator().setFrame(frame, display: true)
-                        }
-                    } else {
-                        w.setFrame(frame, display: true)
-                    }
+                    // The dragged window follows the mouse and its slot stays open, so it joins nothing.
+                    if !w.minimised, w !== dragging { chambers.append((w, frame)) }
+                    guard only == nil || only === w, w !== dragging else { continue }
+                    w.dock(to: frame, scale: placement.scale, animated: animated)
                 }
             }
         }
+        guard only == nil else { return }
+        // Connectors follow where windows are going, not where the animation has got to, so they
+        // open and close during a drag as the stacks make and lose room.
+        let joined = Dictionary(uniqueKeysWithValues: zip(chambers.map { ObjectIdentifier($0.window) },
+                                                          Connectors.edges(chambers.map(\.frame))))
+        for w in windows { w.setNeighbours(joined[ObjectIdentifier(w)] ?? []) }
     }
 
     // MARK: saved layout (used by Persistence)
