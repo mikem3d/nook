@@ -62,6 +62,8 @@ final class AgentWindow: NSPanel {
     func refresh() {
         let quiet = controller?.isQuiet ?? false
         room.show(state: session.state, bubble: quiet ? "" : session.bubble, unread: session.unread)
+        room.showVitals(contextFraction: Double(session.contextTokens) / Double(max(session.contextLimit, 1)),
+                        cost: session.costUSD, changedFiles: session.changedFiles, turnStarted: session.turnStarted)
     }
 
     /// Shown while a desktop drag or a handoff hovers over this window.
