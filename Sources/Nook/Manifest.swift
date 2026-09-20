@@ -104,6 +104,9 @@ final class Art {
         return (prop, textures)
     }
 
+    /// Scenes the user can pick for a window, in menu order. Contract: ids are stable and persisted.
+    var sceneChoices: [(id: String, name: String)] { [] }
+
     func frames(for animation: String) -> [SKTexture] {
         frames[animation] ?? frames["idle_breathe"] ?? []
     }

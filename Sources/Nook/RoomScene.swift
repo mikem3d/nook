@@ -204,6 +204,24 @@ final class RoomScene: SKScene {
     }
 
     func setDimmed(_ on: Bool) { dim.isHidden = !on; poke() }
+
+    // --- Contract between the scene and the window chrome (themes work, 2026-09). ---
+
+    /// A side of the window that touches another agent's window in the same stack.
+    enum Edge: CaseIterable { case top, bottom, left, right }
+
+    /// Diameter, in art pixels, of the circular portrait a minimised window shows.
+    static let orb: CGFloat = 28
+    /// Header hit areas in art pixels, measured from the window's right edge: [close][minimise].
+    static let closeHit: CGFloat = 12
+    static let minimiseHit: CGFloat = 24
+
+    /// The chrome tells the scene which sides have a neighbour; the scene opens a ladder or
+    /// tunnel there so chambers connect. Empty set: a sealed chamber.
+    func setNeighbours(_ edges: Set<Edge>) {}
+
+    /// Switches this window to another scene of the current theme (see `Art.sceneChoices`).
+    func setScene(_ id: String) {}
     func setActive(_ on: Bool) { border.isHidden = !on; poke() }
 
     // MARK: idle cost
