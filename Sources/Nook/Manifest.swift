@@ -26,8 +26,22 @@ struct Manifest: Decodable {
         let fg: String
     }
 
+    /// A small sprite that shows one vital sign. Its sheet holds `states` frames side by side, left to right.
+    struct Prop: Decodable {
+        let name: String
+        let sheet: String
+        let frame: [Int]
+        let states: Int
+        /// Bottom-left of the prop in canvas pixels, from the canvas bottom-left.
+        let position: [CGFloat]
+        /// Draw order: the background is 0, the character 1, the foreground 2.
+        let z: CGFloat
+    }
+
     let character: Character
     let rooms: [Room]
+    /// Optional: a manifest without props, or missing some of them, still gives a working room.
+    let props: [Prop]?
 }
 
 /// Loaded once, shared by every window.
@@ -72,6 +86,22 @@ final class Art {
         t.filteringMode = .nearest
         cache[path] = t
         return t
+    }
+
+    /// Where a bundled file lives (fonts and the like).
+    func url(_ path: String) -> URL { root.appendingPathComponent(path) }
+
+    /// One texture per state, or nil when the prop is not declared or its sheet will not load.
+    func states(forProp name: String) -> (prop: Manifest.Prop, textures: [SKTexture])? {
+        guard let prop = manifest.props?.first(where: { $0.name == name }), prop.states > 0, prop.frame.count == 2,
+              prop.position.count == 2, let sheet = try? texture(prop.sheet) else { return nil }
+        let w = 1.0 / CGFloat(prop.states)
+        let textures = (0..<prop.states).map { i -> SKTexture in
+            let t = SKTexture(rect: CGRect(x: CGFloat(i) * w, y: 0, width: w, height: 1), in: sheet)
+            t.filteringMode = .nearest
+            return t
+        }
+        return (prop, textures)
     }
 
     func frames(for animation: String) -> [SKTexture] {
