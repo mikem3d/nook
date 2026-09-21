@@ -9,6 +9,10 @@
 #
 # macOS kills a process that asks for the microphone or speech recognition without usage strings
 # in an Info.plist, so voice only works from this bundle, never from `swift run`.
+# Notifications are the same: macOS files them, and the user's permission for them, under the bundle
+# identifier, so keep NOOK_BUNDLE_ID stable between builds. An ad-hoc signature is enough; no
+# entitlement or Info.plist key is needed (time-sensitive delivery would need a paid account's
+# provisioning profile, so Nook does not use it).
 set -euo pipefail
 
 CONFIG="${1:-release}"

@@ -8,6 +8,8 @@ import CoreGraphics
 /// square orbs. Orbs between chambers would break the mountain, so whatever the window order,
 /// a stack lays out its chambers first and gathers its orbs at the far end, away from the corner.
 /// In a column the orbs hug the screen edge; in a row they stand on the floor of their line.
+/// A stack may end in a plus orb (the new-agent button): one more orb after all the others. It is
+/// not a window of the stack, so it has its own place in `Placement` and a stack of nothing else is valid.
 ///
 /// Every stack starts as one line at the largest scale. When stacks collide with each other or
 /// with a reserved rectangle (the chat panel), the longest offender first shrinks, then wraps
@@ -21,12 +23,15 @@ struct DockLayout {
         let axis: Axis
         /// One entry per window, from the corner inward: is it minimised to an orb?
         let minimised: [Bool]
+        /// Ends in a plus orb.
+        var plus = false
     }
 
     struct Placement: Equatable {
         let scale: CGFloat
         let lines: Int
         let frames: [CGRect]
+        var plus: CGRect?
     }
 
     var canvas = CGSize(width: 192, height: 108)
@@ -52,15 +57,16 @@ struct DockLayout {
         minimised ? CGSize(width: orb * s, height: orb * s) : CGSize(width: canvas.width * s, height: canvas.height * s)
     }
 
-    /// Frames for one stack, in window order. Chambers wrap evenly into `lines` lines that grow
-    /// away from the screen edge; orbs follow the last chamber and wrap only when they run out of screen.
+    /// Frames for one stack, in window order, with the plus orb's frame last if the stack has one.
+    /// Chambers wrap evenly into `lines` lines that grow away from the screen edge; orbs follow the
+    /// last chamber and wrap only when they run out of screen.
     func frames(for stack: Stack, in area: CGRect, scale s: CGFloat, lines: Int) -> [CGRect] {
-        let count = stack.minimised.count
+        let count = stack.minimised.count + (stack.plus ? 1 : 0)
         guard count > 0 else { return [] }
         let corner = stack.corner
         let vertical = stack.axis == .vertical
-        let chambers = (0..<count).filter { !stack.minimised[$0] }
-        let orbs = (0..<count).filter { stack.minimised[$0] }
+        let chambers = stack.minimised.indices.filter { !stack.minimised[$0] }
+        let orbs = stack.minimised.indices.filter { stack.minimised[$0] } + (stack.plus ? [count - 1] : [])
         var result = [CGRect](repeating: .zero, count: count)
         var across = margin
         var along = margin
@@ -119,7 +125,7 @@ struct DockLayout {
     /// Solves every stack on one screen. `area` is the screen's visible frame in global coordinates
     /// (any origin, negative included). `reserved` is kept clear if at all possible.
     func solve(area: CGRect, stacks: [Stack], reserved: CGRect? = nil) -> [Corner: Placement] {
-        let stacks = stacks.filter { !$0.minimised.isEmpty }.sorted { $0.corner.rawValue < $1.corner.rawValue }
+        let stacks = stacks.filter { !$0.minimised.isEmpty || $0.plus }.sorted { $0.corner.rawValue < $1.corner.rawValue }
         guard !stacks.isEmpty else { return [:] }
 
         // Per stack: the area it lays out in (shrunk from the bottom once lifted) and its options in order.
@@ -179,8 +185,35 @@ struct DockLayout {
         var result: [Corner: Placement] = [:]
         for i in stacks.indices {
             let o = choices[i][picked[i]]
-            result[stacks[i].corner] = Placement(scale: o.scale, lines: o.lines, frames: current(i))
+            let all = current(i)
+            let members = stacks[i].minimised.count
+            result[stacks[i].corner] = Placement(scale: o.scale, lines: o.lines, frames: Array(all.prefix(members)),
+                                                 plus: stacks[i].plus ? all.last : nil)
         }
         return result
+    }
+
+    /// The free run of screen edge beyond a stack's far end, as thick as the stack: where a folder
+    /// dropped "on the stack's edge" lands. It stops short of any other stack, and is nil when
+    /// what is left is smaller than an orb.
+    func edgeZone(of corner: Corner, axis: Axis, in area: CGRect, placements: [Corner: Placement]) -> CGRect? {
+        func bounds(_ p: Placement) -> CGRect { (p.frames + [p.plus].compactMap { $0 }).reduce(CGRect.null) { $0.union($1) } }
+        guard let own = placements[corner].map(bounds), !own.isNull else { return nil }
+        let inner = area.insetBy(dx: margin, dy: margin)
+        let vertical = axis == .vertical
+        // The zone's extent along the stack; it runs towards larger coordinates from a bottom column or a left row.
+        let rising = vertical ? corner.isBottom : !corner.isRight
+        var lo = rising ? (vertical ? own.maxY : own.maxX) + orbGap : (vertical ? inner.minY : inner.minX)
+        var hi = rising ? (vertical ? inner.maxY : inner.maxX) : (vertical ? own.minY : own.minX) - orbGap
+        func zone() -> CGRect {
+            vertical ? CGRect(x: own.minX, y: lo, width: own.width, height: hi - lo)
+                     : CGRect(x: lo, y: own.minY, width: hi - lo, height: own.height)
+        }
+        for (other, placement) in placements where other != corner && hi > lo {
+            let block = bounds(placement).insetBy(dx: -gap, dy: -gap)
+            guard block.intersects(zone()) else { continue }
+            if rising { hi = min(hi, vertical ? block.minY : block.minX) } else { lo = max(lo, vertical ? block.maxY : block.maxX) }
+        }
+        return hi - lo >= orb ? zone() : nil
     }
 }

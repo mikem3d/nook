@@ -15,6 +15,8 @@ struct AgentCalendar: Codable, Equatable {
         /// A run that came due while Nook was closed, the Mac slept or the agent was not open. Never
         /// sent by itself; the panel offers "Run now".
         var missed: Date?
+        /// Set when the prompt is tied to an event on the user's real calendar; its `once` date follows the event.
+        var anchor: EventAnchor?
     }
 
     struct Turn: Codable, Equatable, Identifiable {
