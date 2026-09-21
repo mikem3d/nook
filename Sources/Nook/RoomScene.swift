@@ -173,6 +173,9 @@ final class RoomScene: SKScene {
                                                           name: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification, object: nil)
         relayout()
         refreshVitals()
+        for name in [TextSize.changed, NSWindow.didChangeBackingPropertiesNotification] {
+            NotificationCenter.default.addObserver(self, selector: #selector(textMetricsChanged), name: name, object: nil)
+        }
     }
 
     required init?(coder: NSCoder) { fatalError("not used") }
@@ -372,7 +375,15 @@ final class RoomScene: SKScene {
     // MARK: layout
 
     /// Points per font pixel, and a helper to go from font pixels to points.
-    private var fp: CGFloat { PixelFont.pixel(atScale: scale) }
+    private var fp: CGFloat {
+        PixelFont.pixel(atScale: scale, backing: (view?.window?.screen ?? NSScreen.main)?.backingScaleFactor ?? 2)
+    }
+
+    /// The text-size setting changed, or the window moved to a display with another density.
+    @objc private func textMetricsChanged() {
+        relayout()
+        poke()
+    }
 
     private func setText(_ node: SKSpriteNode, lines: [String], color: NSColor) {
         guard let (texture, size) = PixelFont.shared.texture(lines: lines, color: color) else {
@@ -392,17 +403,6 @@ final class RoomScene: SKScene {
         orbNode.isHidden = !minimised
         titleText.isHidden = minimised
 
-        // Header text sits on the font-pixel grid, centred in the bar as nearly as that grid allows.
-        let cell = CGFloat(PixelFont.cellW) * fp
-        let columns = Int((Self.badgeRight - Self.titleX - 2) * s / cell)
-        let shown = label.count > columns ? String(label.prefix(max(columns - 1, 1))) + "…" : label
-        let key = "\(shown)|\(fp)"
-        if key != titleKey {
-            titleKey = key
-            setText(titleText, lines: [shown], color: .white)
-        }
-        titleText.position = CGPoint(x: Self.titleX * s, y: (Self.H - Self.bar) * s + headerInset)
-
         badgeKey = ""
         refreshBadge()
         layoutBubble()
@@ -410,7 +410,22 @@ final class RoomScene: SKScene {
 
     private var headerInset: CGFloat { ((Self.bar * scale / fp - CGFloat(PixelFont.cellH)) / 2).rounded(.down) * fp }
 
+    /// Header text sits on the font-pixel grid, centred in the bar as nearly as that grid allows,
+    /// and stops short of the unread badge, whose width depends on the count and the font pixel.
+    private func layoutTitle(badgeWidth: CGFloat) {
+        let cell = CGFloat(PixelFont.cellW) * fp
+        let columns = Int((Self.badgeRight - badgeWidth - Self.titleX - 2) * scale / cell)
+        let shown = label.count > columns ? String(label.prefix(max(columns - 1, 1))) + "…" : label
+        let key = "\(shown)|\(fp)"
+        if key != titleKey {
+            titleKey = key
+            setText(titleText, lines: [shown], color: .white)
+        }
+        titleText.position = CGPoint(x: Self.titleX * scale, y: (Self.H - Self.bar) * scale + headerInset)
+    }
+
     private func refreshBadge() {
+        if unread == 0 { layoutTitle(badgeWidth: 0) }
         badgeBox.isHidden = unread == 0
         badgeText.isHidden = unread == 0
         guard unread > 0 else { return }
@@ -423,6 +438,7 @@ final class RoomScene: SKScene {
         // The box is whole art pixels; the text is centred in it on the font grid. In the header it
         // sits left of the buttons; on an orb it overlaps the top right of the ring.
         let width = (badgeText.size.width / scale).rounded(.up) + 2
+        layoutTitle(badgeWidth: minimised ? 0 : width)
         let top = minimised ? Self.orb - 1 + badgeLift : Self.H - 1
         badgeBox.size = CGSize(width: width, height: Self.bar - 2)
         badgeBox.position = CGPoint(x: minimised ? Self.orb : Self.badgeRight, y: top - (Self.bar - 2))
@@ -434,7 +450,7 @@ final class RoomScene: SKScene {
     /// Characters per line and lines per page. The bubble is at most 36 px of text tall so the
     /// tail can still reach the character's head.
     private var bubbleGrid: (columns: Int, rows: Int) {
-        let width: CGFloat = fp < scale ? 112 : 140
+        let width = PixelFont.bubbleWidth(atScale: scale, pixel: fp)
         return (Int(width * scale / (CGFloat(PixelFont.cellW) * fp)), Int(33 * scale / (CGFloat(PixelFont.cellH) * fp)))
     }
 

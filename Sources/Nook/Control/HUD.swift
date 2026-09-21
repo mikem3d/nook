@@ -19,6 +19,8 @@ final class HUD {
     private var panel: NSPanel?
     private let title = NSTextField(labelWithString: "")
     private let detail = NSTextField(labelWithString: "")
+    private let stack = NSStackView()
+    private var widthLimit: NSLayoutConstraint!
     private var hide: DispatchWorkItem?
 
     func show(_ text: String, detail extra: String = "", near window: NSWindow? = nil,
@@ -26,6 +28,7 @@ final class HUD {
         guard important || !isSuppressed() else { return }
         let panel = self.panel ?? build()
         self.panel = panel
+        applyTextSize()
         title.stringValue = text
         detail.stringValue = extra
         detail.isHidden = extra.isEmpty
@@ -55,6 +58,16 @@ final class HUD {
         })
     }
 
+    /// Read each time a message shows, so the HUD follows the setting without observing it.
+    private func applyTextSize() {
+        let size = TextSize.current
+        title.font = TextSize.font(.title, weight: .semibold)
+        detail.font = TextSize.mono(.secondary)
+        stack.spacing = size.metric(4)
+        stack.edgeInsets = NSEdgeInsets(top: size.metric(12), left: size.metric(20), bottom: size.metric(12), right: size.metric(20))
+        widthLimit.constant = size.metric(480)
+    }
+
     private static func frame(size: NSSize, near window: NSWindow?) -> NSRect {
         let gap: CGFloat = 8
         guard let window, let area = (window.screen ?? NSScreen.main)?.visibleFrame else {
@@ -71,7 +84,7 @@ final class HUD {
 
     private func build() -> NSPanel {
         let panel = NSPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
-        panel.level = .statusBar
+        panel.level = NookLevel.hud
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = true
@@ -87,25 +100,22 @@ final class HUD {
         glass.layer?.cornerRadius = 10
         glass.layer?.masksToBounds = true
 
-        title.font = .systemFont(ofSize: 13, weight: .semibold)
         title.lineBreakMode = .byTruncatingTail
-        detail.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
         detail.textColor = .secondaryLabelColor
         detail.lineBreakMode = .byTruncatingMiddle
 
-        let stack = NSStackView(views: [title, detail])
+        stack.setViews([title, detail], in: .top)
         stack.orientation = .vertical
         stack.alignment = .centerX
-        stack.spacing = 3
-        stack.edgeInsets = NSEdgeInsets(top: 10, left: 16, bottom: 10, right: 16)
         stack.translatesAutoresizingMaskIntoConstraints = false
         glass.addSubview(stack)
+        widthLimit = glass.widthAnchor.constraint(lessThanOrEqualToConstant: 480)
         NSLayoutConstraint.activate([
             stack.leadingAnchor.constraint(equalTo: glass.leadingAnchor),
             stack.trailingAnchor.constraint(equalTo: glass.trailingAnchor),
             stack.topAnchor.constraint(equalTo: glass.topAnchor),
             stack.bottomAnchor.constraint(equalTo: glass.bottomAnchor),
-            glass.widthAnchor.constraint(lessThanOrEqualToConstant: 380),
+            widthLimit,
         ])
         panel.contentView = glass
         return panel

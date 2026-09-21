@@ -48,7 +48,10 @@ final class AppController: NSObject, NSApplicationDelegate {
 
     /// Quiet mode: windows keep their state dot and badge but stop showing speech bubbles.
     var isQuiet = false {
-        didSet { windows.forEach { $0.refresh() } }
+        didSet {
+            windows.forEach { $0.refresh() }
+            if isQuiet != oldValue { NotificationCenter.default.post(name: .nookQuietChanged, object: self) }
+        }
     }
 
     // MARK: launch

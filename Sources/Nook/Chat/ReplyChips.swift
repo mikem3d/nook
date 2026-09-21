@@ -39,7 +39,7 @@ final class PillButton: NSButton {
         super.init(frame: .zero)
         self.title = title
         isBordered = false
-        font = .systemFont(ofSize: 11, weight: .medium)
+        font = TextSize.font(.secondary, weight: .medium)
         contentTintColor = .labelColor
         lineBreakMode = .byTruncatingMiddle
         target = self
@@ -52,7 +52,7 @@ final class PillButton: NSButton {
 
     override var intrinsicContentSize: NSSize {
         let size = super.intrinsicContentSize
-        return NSSize(width: min(size.width + 18, 220), height: 22)
+        return NSSize(width: min(size.width + TextSize.metric(22), TextSize.metric(280)), height: TextSize.metric(28))
     }
 
     override func draw(_ dirtyRect: NSRect) {

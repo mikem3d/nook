@@ -12,13 +12,16 @@ final class ClosePrompt: NSPanel {
     private let cancel = NSButton(title: "Cancel", target: nil, action: nil)
     private var onConfirm: (() -> Void)?
     private var takesKeys = false
+    private let text = NSStackView()
+    private let row = NSStackView()
+    private var widthLimit: NSLayoutConstraint!
     private var hide: DispatchWorkItem?
     /// The chat panel, when ⌘W asked the question: it gets the keyboard back afterwards.
     private weak var previousKey: NSWindow?
 
     private init() {
         super.init(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
-        level = .statusBar
+        level = NookLevel.hud
         isOpaque = false
         backgroundColor = .clear
         hasShadow = true
@@ -34,35 +37,30 @@ final class ClosePrompt: NSPanel {
         glass.layer?.cornerRadius = 10
         glass.layer?.masksToBounds = true
 
-        heading.font = .systemFont(ofSize: 13, weight: .semibold)
         heading.lineBreakMode = .byTruncatingMiddle
-        note.font = .systemFont(ofSize: 11)
         note.textColor = .secondaryLabelColor
         note.lineBreakMode = .byTruncatingTail
         for button in [confirm, cancel] {
             button.bezelStyle = .rounded
-            button.controlSize = .small
             button.target = self
         }
         confirm.action = #selector(confirmed)
         cancel.action = #selector(dismiss)
         cancel.keyEquivalent = "\u{1b}"
 
-        let text = NSStackView(views: [heading, note])
+        text.setViews([heading, note], in: .top)
         text.orientation = .vertical
         text.alignment = .leading
-        text.spacing = 2
-        let row = NSStackView(views: [text, cancel, confirm])
-        row.spacing = 10
-        row.edgeInsets = NSEdgeInsets(top: 10, left: 14, bottom: 10, right: 12)
+        row.setViews([text, cancel, confirm], in: .leading)
         row.translatesAutoresizingMaskIntoConstraints = false
         glass.addSubview(row)
+        widthLimit = glass.widthAnchor.constraint(lessThanOrEqualToConstant: 580)
         NSLayoutConstraint.activate([
             row.leadingAnchor.constraint(equalTo: glass.leadingAnchor),
             row.trailingAnchor.constraint(equalTo: glass.trailingAnchor),
             row.topAnchor.constraint(equalTo: glass.topAnchor),
             row.bottomAnchor.constraint(equalTo: glass.bottomAnchor),
-            glass.widthAnchor.constraint(lessThanOrEqualToConstant: 460),
+            widthLimit,
         ])
         contentView = glass
     }
@@ -89,6 +87,7 @@ final class ClosePrompt: NSPanel {
     private func present(_ title: String, detail: String, button: String, question: Bool, near anchor: NSRect?, action: @escaping () -> Void) {
         hide?.cancel()
         hide = nil
+        applyTextSize()
         heading.stringValue = title
         note.stringValue = detail
         note.isHidden = detail.isEmpty
@@ -101,6 +100,22 @@ final class ClosePrompt: NSPanel {
         content.layoutSubtreeIfNeeded()
         setFrame(Self.frame(size: content.fittingSize, near: anchor), display: true)
         alphaValue = 1
+    }
+
+    /// Read each time a prompt shows, so it follows the setting without observing it.
+    private func applyTextSize() {
+        let size = TextSize.current
+        heading.font = TextSize.font(.title, weight: .semibold)
+        note.font = TextSize.font(.secondary)
+        let control: NSControl.ControlSize = size.rawValue > 1 ? .large : .regular
+        for button in [confirm, cancel] {
+            button.controlSize = control
+            button.font = .systemFont(ofSize: max(size.points(.secondary), NSFont.systemFontSize(for: control)))
+        }
+        text.spacing = size.metric(3)
+        row.spacing = size.metric(12)
+        row.edgeInsets = NSEdgeInsets(top: size.metric(12), left: size.metric(16), bottom: size.metric(12), right: size.metric(14))
+        widthLimit.constant = size.metric(580)
     }
 
     /// A question left behind (the user clicked elsewhere) counts as Cancel.

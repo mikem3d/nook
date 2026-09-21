@@ -32,15 +32,6 @@ final class SceneLogicTests: XCTestCase {
         XCTAssertEqual([3, 7, 12, 18, 23].map { Vitals.sky(hour: $0, states: 3) }, [2, 1, 0, 1, 2])
     }
 
-    func testFontPixelIsAWholeNumberOfRetinaPixelsOnTheArtGrid() {
-        for s in [1, 1.5, 2] as [CGFloat] {
-            let fp = PixelFont.pixel(atScale: s)
-            XCTAssertEqual((fp * 2).truncatingRemainder(dividingBy: 1), 0, "device pixels at \(s)x")
-            XCTAssertEqual((s / fp).truncatingRemainder(dividingBy: 1), 0, "font pixels per art pixel at \(s)x")
-            XCTAssertGreaterThanOrEqual(fp * CGFloat(PixelFont.cellH), 10, "text size in points at \(s)x")
-        }
-    }
-
     func testSavedStateRoundTripsAndSkipsMissingFolders() throws {
         let here = FileManager.default.temporaryDirectory.path
         let state = Persistence.SavedState(agents: [

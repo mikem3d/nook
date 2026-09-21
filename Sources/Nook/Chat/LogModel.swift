@@ -41,7 +41,7 @@ enum LogModel {
 
 /// Turns log items into attributed text. Every item ends with a thin spacer line.
 enum LogRenderer {
-    private static let toolFont = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+    private static var toolFont: NSFont { TextSize.mono(.secondary) }
 
     static func render(_ item: LogItem, expanded: Bool) -> NSAttributedString {
         let out = NSMutableAttributedString()
@@ -49,9 +49,9 @@ enum LogRenderer {
         case let .message(.assistant, text):
             out.append(Markdown.render(text))
         case let .message(.user, text):
-            out.append(line(text, font: .systemFont(ofSize: 13, weight: .semibold), color: .controlAccentColor, spacing: 7))
+            out.append(line(text, font: TextSize.font(.body, weight: .semibold), color: .controlAccentColor, spacing: TextSize.metric(8)))
         case let .message(.system, text):
-            out.append(line("— " + text, font: .systemFont(ofSize: 11), color: .tertiaryLabelColor, spacing: 5))
+            out.append(line("— " + text, font: TextSize.font(.secondary), color: .secondaryLabelColor, spacing: TextSize.metric(6)))
         case let .message(.tool, text):
             out.append(toolLine(text, indent: 0))
         case let .tools(start, lines):
@@ -59,16 +59,16 @@ enum LogRenderer {
                 lines.forEach { out.append(toolLine($0, indent: 0)) }
             } else {
                 let title = NSMutableAttributedString(string: "⚙ \(lines.count) tool calls \(expanded ? "▾" : "▸")", attributes: [
-                    .font: NSFont.systemFont(ofSize: 11, weight: .medium), .foregroundColor: NSColor.secondaryLabelColor,
+                    .font: TextSize.font(.secondary, weight: .medium), .foregroundColor: NSColor.secondaryLabelColor,
                     .link: Markdown.actionURL, .nookToggle: start])
                 if !expanded, let last = lines.last {
                     title.append(NSAttributedString(string: "   " + last, attributes: [.font: toolFont, .foregroundColor: NSColor.tertiaryLabelColor]))
                 }
-                out.append(paragraph(title, spacing: 2, truncates: true))
-                if expanded { lines.forEach { out.append(toolLine($0, indent: 14)) } }
+                out.append(paragraph(title, spacing: TextSize.metric(3), truncates: true))
+                if expanded { lines.forEach { out.append(toolLine($0, indent: TextSize.metric(17))) } }
             }
         }
-        out.append(NSAttributedString(string: "\n", attributes: [.font: NSFont.systemFont(ofSize: 5)]))
+        out.append(NSAttributedString(string: "\n", attributes: [.font: NSFont.systemFont(ofSize: TextSize.metric(6))]))
         return out
     }
 
@@ -80,7 +80,7 @@ enum LogRenderer {
     private static func toolLine(_ text: String, indent: CGFloat) -> NSAttributedString {
         let single = text.replacingOccurrences(of: "\n", with: " ")
         let content = NSAttributedString(string: "⚙ " + single, attributes: [.font: toolFont, .foregroundColor: NSColor.secondaryLabelColor])
-        return paragraph(content, spacing: 2, truncates: true, indent: indent)
+        return paragraph(content, spacing: TextSize.metric(3), truncates: true, indent: indent)
     }
 
     private static func line(_ text: String, font: NSFont, color: NSColor, spacing: CGFloat) -> NSAttributedString {
