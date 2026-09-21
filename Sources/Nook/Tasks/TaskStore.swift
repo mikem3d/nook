@@ -2,10 +2,9 @@ import Foundation
 
 extension Notification.Name {
     /// A task was added, edited, moved on, removed, or went overdue. Object: the TaskStore.
-    /// userInfo: "task" (NookTask, as it is now; as it last was when removed), and a true "removed"
-    /// or "overdue" flag when that is what happened.
+    /// userInfo: see `TaskStore.info`, plus a true "removed" or "overdue" when that is what happened.
     static let nookTaskChanged = Notification.Name("nookTaskChanged")
-    /// A task's turn ended. Object: the TaskStore; userInfo: "task" (NookTask, status `.done` or `.failed`).
+    /// A task's turn ended. Object: the TaskStore; userInfo as above, the task's status `.done` or `.failed`.
     static let nookTaskFinished = Notification.Name("nookTaskFinished")
 }
 
@@ -30,6 +29,8 @@ final class TaskStore {
 
     private let file: URL
     private var contents: File
+    /// How an agent key reads in a notification; the hub supplies the open windows' labels.
+    var labels: (String) -> String = NookTask.label(forAgent:)
 
     var tasks: [NookTask] { contents.tasks }
 
@@ -95,6 +96,21 @@ final class TaskStore {
         return result
     }
 
+    // MARK: notifications
+
+    /// What every task notification carries: the whole task under "task", and its plain fields for
+    /// listeners that do not know the type: "id" (UUID string), "title", "done" (finished, cancelled
+    /// or removed), "agent" (its label, when assigned) and "due" (the moment it becomes overdue: the
+    /// time given, or the end of the day when only a day was).
+    func info(_ task: NookTask, removed: Bool = false, overdue: Bool = false) -> [AnyHashable: Any] {
+        var info: [AnyHashable: Any] = ["task": task, "id": task.id.uuidString, "title": task.title, "done": removed || task.status.isFinished]
+        if let agent = task.agent { info["agent"] = labels(agent) }
+        if let deadline = task.deadline() { info["due"] = deadline }
+        if removed { info["removed"] = true }
+        if overdue { info["overdue"] = true }
+        return info
+    }
+
     // MARK: edits
 
     /// Changes the list, saves if that changed anything, and says what changed. Returns true if it did.
@@ -112,13 +128,13 @@ final class TaskStore {
         let new = Dictionary(tasks.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         let centre = NotificationCenter.default
         for task in tasks where old[task.id] != task {
-            centre.post(name: .nookTaskChanged, object: self, userInfo: ["task": task])
+            centre.post(name: .nookTaskChanged, object: self, userInfo: info(task))
             if task.status == .done || task.status == .failed, old[task.id]?.status.isOut == true {
-                centre.post(name: .nookTaskFinished, object: self, userInfo: ["task": task])
+                centre.post(name: .nookTaskFinished, object: self, userInfo: info(task))
             }
         }
         for task in before where new[task.id] == nil {
-            centre.post(name: .nookTaskChanged, object: self, userInfo: ["task": task, "removed": true])
+            centre.post(name: .nookTaskChanged, object: self, userInfo: info(task, removed: true))
         }
         centre.post(name: Self.changed, object: self)
         return true

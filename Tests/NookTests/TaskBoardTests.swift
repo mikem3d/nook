@@ -297,6 +297,25 @@ final class TaskBoardTests: XCTestCase {
         XCTAssertEqual(finished.count, 1, "a cancel is not a finish")
     }
 
+    func testNotificationsCarryPlainFieldsTheNotificationsFeatureCanRead() throws {
+        let store = TaskStore(folder: folder())
+        let task = NookTask(title: "ship", due: Date(timeIntervalSince1970: 2_000_000_000), dueHasTime: true, agent: "/work/zipdemand")
+        var parsed = try XCTUnwrap(DueTasks.parse(store.info(task)))
+        XCTAssertEqual(parsed.id, task.id.uuidString)
+        XCTAssertEqual(parsed.title, "ship")
+        XCTAssertEqual(parsed.agent, "zipdemand")
+        XCTAssertEqual(parsed.due, task.due)
+        XCTAssertFalse(parsed.done)
+        XCTAssertEqual(store.info(task)["task"] as? NookTask, task)
+        parsed = try XCTUnwrap(DueTasks.parse(store.info(task, removed: true)))
+        XCTAssertTrue(parsed.done, "a removed task is forgotten")
+        var day = NookTask(title: "by friday", due: date(2026, 9, 25), status: .cancelled)
+        XCTAssertTrue(try XCTUnwrap(DueTasks.parse(store.info(day))).done)
+        day.status = .queued
+        XCTAssertEqual(store.info(day)["due"] as? Date, day.deadline(), "a day is due by its end, so that is when an alert belongs")
+        XCTAssertNil(store.info(day)["agent"])
+    }
+
     func testVersionOneFileMigratesWithABackupAndLosesNothing() throws {
         let folder = folder()
         let file = folder.appendingPathComponent("tasks.json")

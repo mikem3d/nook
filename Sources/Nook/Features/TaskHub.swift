@@ -7,13 +7,16 @@
 //     TaskHub.shared.dueSoon(within:)       the same with another horizon, in seconds
 //     TaskHub.shared.label(forAgent:)       a task's `agent` key (its folder path) as a name to show
 //
-//     .nookTaskChanged    userInfo["task"]: NookTask. Posted when a task is added, edited, sent, finished
-//                         or removed (userInfo["removed"] == true, with the task as it last was), and once
-//                         at the moment a task goes overdue (userInfo["overdue"] == true).
-//     .nookTaskFinished   userInfo["task"]: NookTask, status `.done` or `.failed`, `result` holding the
-//                         turn's summary. Posted once, when the turn that carried the task ends.
+//     .nookTaskChanged    Posted when a task is added, edited, sent, finished or removed
+//                         (userInfo["removed"] == true, with the task as it last was), once at the moment
+//                         a task goes overdue (userInfo["overdue"] == true), and once at launch for every
+//                         open task that has a due date, so a listener starts with the full picture.
+//     .nookTaskFinished   Posted once, when the turn that carried the task ends: status `.done` or
+//                         `.failed`, `result` holding the turn's summary.
 //
-// Both are posted on the main thread with the TaskStore as object. `task.isOverdue(at:)`,
+// userInfo of both: "task" (the NookTask), and the same in plain fields: "id" (UUID string), "title",
+// "done" (Bool), "agent" (label, when assigned), "due" (Date: the moment it becomes overdue). See
+// `TaskStore.info`. Both are posted on the main thread with the TaskStore as object. `task.isOverdue(at:)`,
 // `task.isDueToday(at:)` and `task.dueText()` say how a due date reads. Nothing polls: the overdue
 // notice comes from one timer set to the next deadline.
 //
@@ -70,6 +73,11 @@ final class TaskHub: NSObject, Feature {
             centre.addObserver(self, selector: #selector(clockChanged), name: name, object: nil)
         }
         NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(clockChanged), name: NSWorkspace.didWakeNotification, object: nil)
+        store.labels = { [weak self] in self?.label(forAgent: $0) ?? NookTask.label(forAgent: $0) }
+        // Listeners (the notifications feature) keep their own record of due tasks; give them what was saved.
+        for task in store.tasks where !task.status.isFinished && task.due != nil {
+            centre.post(name: .nookTaskChanged, object: store, userInfo: store.info(task))
+        }
         arm()
     }
 
@@ -165,7 +173,7 @@ final class TaskHub: NSObject, Feature {
         }
         overdueChecked = now
         for task in late {
-            NotificationCenter.default.post(name: .nookTaskChanged, object: store, userInfo: ["task": task, "overdue": true])
+            NotificationCenter.default.post(name: .nookTaskChanged, object: store, userInfo: store.info(task, overdue: true))
         }
         if !late.isEmpty { NotificationCenter.default.post(name: TaskStore.changed, object: store) }
         arm()

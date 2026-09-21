@@ -120,13 +120,15 @@ enum TaskPrompt {
     }
 
     /// The system line written before a send. An automatic one names its source and what it waited on.
+    /// Every one starts "Queued task", and an automatic one says "automatically": the notifications
+    /// feature tells unattended sends from the user's own by those words.
     static func note(_ task: NookTask, in tasks: [NookTask], source: TaskScheduler.Source?, labels: (String) -> String) -> String {
         guard let source else { return "Queued task: " + task.title }
         let waited = task.after.compactMap(tasks.task).map { "“\($0.title)”" + ($0.agent.map { " (\(labels($0)))" } ?? "") }
         let chain = waited.isEmpty ? "" : ", after \(waited.joined(separator: ", ")) finished"
         switch source {
         case .autoQueue: return "Queued task (sent automatically by the auto queue\(chain)): " + task.title
-        case .chain: return "Chained task (sent automatically: marked to run when unblocked\(chain)): " + task.title
+        case .chain: return "Queued task (chained, sent automatically: marked to run when unblocked\(chain)): " + task.title
         }
     }
 }

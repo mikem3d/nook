@@ -212,7 +212,11 @@ final class TaskSchedulerTests: XCTestCase {
         let labels: (String) -> String = NookTask.label(forAgent:)
         XCTAssertEqual(TaskPrompt.note(x, in: tasks, source: nil, labels: labels), "Queued task: Build the API")
         let chained = TaskPrompt.note(y, in: tasks, source: .chain, labels: labels)
-        XCTAssertTrue(chained.hasPrefix("Chained task (sent automatically"))
+        XCTAssertTrue(chained.hasPrefix("Queued task (chained, sent automatically"))
+        // The notifications feature tells unattended sends from the user's own by these words.
+        XCTAssertTrue(AgentTransition.isAutomaticRun(chained))
+        XCTAssertTrue(AgentTransition.isAutomaticRun(TaskPrompt.note(x, in: tasks, source: .autoQueue, labels: labels)))
+        XCTAssertFalse(AgentTransition.isAutomaticRun(TaskPrompt.note(x, in: tasks, source: nil, labels: labels)))
         XCTAssertTrue(chained.contains("“Build the API” (zipdemand)"), "names what it waited on: \(chained)")
         XCTAssertTrue(TaskPrompt.note(x, in: tasks, source: .autoQueue, labels: labels).contains("auto queue"))
     }
