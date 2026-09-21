@@ -21,6 +21,8 @@ final class Hotspots: NSObject, Feature {
         case scheduled(UUID)
     }
 
+    /// Calendar sync re-anchors event-tied prompts through here.
+    private(set) static weak var current: Hotspots?
     private weak var app: AppController?
     private let tasks: HotspotStore<TaskQueue>
     private let calendars: HotspotStore<AgentCalendar>
@@ -51,6 +53,7 @@ final class Hotspots: NSObject, Feature {
 
     func install(in app: AppController) {
         self.app = app
+        Self.current = self
         // A task that was out when Nook last quit never reported back.
         for key in tasks.keys where tasks[key].sending != nil {
             tasks.update(key) { $0.finish(summary: "Nook closed before it finished", failed: true, at: Date()) }

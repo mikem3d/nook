@@ -11,19 +11,24 @@ final class CalendarModel: ObservableObject {
     @Published var selected: Date?
     /// The item in the editor; nil while the list shows.
     @Published var editing: AgentCalendar.Item?
-    private var sizeObserver: NSObjectProtocol?
+    /// The event the panel is asking the user to confirm before it is written to their calendar.
+    @Published var confirming: CalendarBridge.EventDraft?
+    @Published private(set) var writing = false
+    @Published private(set) var writeNote: String?
+    private var observers: [NSObjectProtocol] = []
 
     init(feature: Hotspots, window: AgentWindow) {
         self.feature = feature
         self.window = window
         label = window.session.label
-        sizeObserver = NotificationCenter.default.addObserver(forName: TextSize.changed, object: nil, queue: .main) { [weak self] _ in
-            self?.objectWillChange.send()
+        observers = [TextSize.changed, .nookCalendarChanged].map { name in
+            NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in self?.objectWillChange.send() }
         }
         reload()
+        sync?.panelOpened()
     }
 
-    deinit { sizeObserver.map(NotificationCenter.default.removeObserver) }
+    deinit { observers.forEach(NotificationCenter.default.removeObserver) }
 
     func reload() {
         guard let feature, let window else { return }
@@ -41,6 +46,7 @@ final class CalendarModel: ObservableObject {
     /// it at once, and nothing is "missed" from before the schedule existed in this form.
     func save(_ item: AgentCalendar.Item) {
         var item = item
+        if let anchor = item.anchor { item.schedule = Schedule(kind: .once, date: anchor.runDate) }
         item.prompt = item.prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !item.prompt.isEmpty else { return }
         item.checkedUntil = Date()
@@ -74,6 +80,40 @@ final class CalendarModel: ObservableObject {
 
     private func edit(_ change: (inout AgentCalendar) -> Void) { window.map { feature?.editCalendar($0, change) } }
 
+    // MARK: the user's real calendar
+
+    var sync: CalendarSync? { CalendarSync.current }
+
+    func events(on day: Date) -> [CalendarEvent] { sync?.events.filter { $0.falls(on: day) } ?? [] }
+
+    /// The event a prompt is tied to, for its title; nil once the event is gone.
+    func event(for anchor: EventAnchor) -> CalendarEvent? {
+        sync?.events.first { $0.id == anchor.eventID && $0.start == anchor.eventStart }
+    }
+
+    func newItem(before event: CalendarEvent) {
+        editing = EventAnchoring.item(prompt: "", before: event, lead: 600, now: Date())
+    }
+
+    /// Step one of "Add to my calendar": nothing is sent, the panel shows this draft and waits.
+    func proposeEvent(for item: AgentCalendar.Item) {
+        guard let start = item.schedule.next(after: Date()) else { return }
+        writeNote = nil
+        confirming = CalendarBridge.EventDraft(title: "Nook: " + String(item.prompt.prefix(60)), start: start,
+                                               end: start.addingTimeInterval(15 * 60), notes: "Scheduled prompt for the agent \"\(label)\": \(item.prompt)")
+    }
+
+    /// Step two, the user's confirmation: one job that may call the create tool and nothing else.
+    func createConfirmedEvent() {
+        guard let draft = confirming, let sync, !writing else { return }
+        writing = true
+        sync.create(draft) { [weak self] problem in
+            self?.writing = false
+            self?.writeNote = problem ?? "Added to your calendar."
+            self?.confirming = nil
+        }
+    }
+
     // MARK: what the view reads
 
     /// Enabled items by their next run; items with nothing left to run come last.
@@ -99,9 +139,12 @@ struct CalendarView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Calendar: \(model.label)").font(HotspotText.title).lineLimit(1)
-            if let item = model.editing {
+            if let draft = model.confirming {
+                EventConfirmation(draft: draft, model: model)
+            } else if let item = model.editing {
                 ScheduleEditor(item: item, isNew: !model.calendar.items.contains { $0.id == item.id }, model: model)
             } else {
+                SyncStrip(model: model)
                 monthView
                 Divider()
                 if let day = model.selected { dayDetail(day) } else { upcoming }
@@ -149,6 +192,8 @@ struct CalendarView: View {
                 HStack(spacing: 3) {
                     Circle().fill(worked ? Color.green : .clear).frame(width: 5, height: 5)
                     Circle().fill(model.isScheduled(day) ? Color.yellow : .clear).frame(width: 5, height: 5)
+                    // The user's own events: a square, so it differs from the agent's dots by shape as well as colour.
+                    Rectangle().fill(model.events(on: day).isEmpty ? Color.clear : .blue).frame(width: 5, height: 5)
                 }
             }
             .frame(maxWidth: .infinity)
@@ -174,6 +219,7 @@ struct CalendarView: View {
                 Spacer()
                 Button("Add…") { model.newItem() }
             }
+            if let note = model.writeNote { Text(note).font(HotspotText.caption).foregroundStyle(.secondary) }
             if model.calendar.items.isEmpty {
                 Text("Nothing scheduled. A scheduled prompt is sent to this agent at its time, while Nook is running, with nobody watching.")
                     .font(HotspotText.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
@@ -197,6 +243,10 @@ struct CalendarView: View {
             }
             Text(item.schedule.summary() + (next.map { " · next " + $0.formatted(date: .abbreviated, time: .shortened) } ?? ""))
                 .font(HotspotText.caption).foregroundStyle(.secondary)
+            if let anchor = item.anchor { AnchorLine(anchor: anchor, event: model.event(for: anchor)) }
+            if next != nil, model.sync?.allowsWrites == true {
+                Button("Add to My Calendar…") { model.proposeEvent(for: item) }.buttonStyle(.link).font(HotspotText.caption)
+            }
             if let last = item.lastRun {
                 Text("Last run " + last.formatted(date: .abbreviated, time: .shortened) + (item.lastSummary.isEmpty ? "" : ": " + item.lastSummary))
                     .font(HotspotText.caption).foregroundStyle(item.lastFailed ? .red : .secondary).lineLimit(2)
@@ -216,6 +266,7 @@ struct CalendarView: View {
 
     private func dayDetail(_ day: Date) -> some View {
         let turns = model.turns(on: day)
+        let events = model.events(on: day)
         let planned = model.calendar.items.filter { $0.enabled && model.isScheduled(day) && $0.schedule.occurs(on: day) }
         return VStack(alignment: .leading, spacing: 6) {
             HStack {
@@ -223,11 +274,12 @@ struct CalendarView: View {
                 Spacer()
                 Button("All Scheduled") { model.selected = nil }.buttonStyle(.link)
             }
-            if turns.isEmpty && planned.isEmpty {
+            if turns.isEmpty && planned.isEmpty && events.isEmpty {
                 Text("Nothing happened and nothing is planned.").font(HotspotText.caption).foregroundStyle(.secondary)
             }
             ScrollView {
                 VStack(alignment: .leading, spacing: 7) {
+                    ForEach(events, id: \.agendaID) { event in EventRow(event: event, model: model) }
                     ForEach(planned) { item in
                         Label(item.prompt + " · " + item.schedule.summary(), systemImage: "clock").font(HotspotText.body).foregroundStyle(.yellow).lineLimit(2)
                     }
@@ -260,20 +312,11 @@ private struct ScheduleEditor: View {
                 .lineLimit(3...6)
                 .textFieldStyle(.roundedBorder)
                 .font(HotspotText.body)
-            Picker("", selection: $item.schedule.kind) {
-                Text("Once").tag(Schedule.Kind.once)
-                Text("Daily").tag(Schedule.Kind.daily)
-                Text("Weekdays").tag(Schedule.Kind.weekdays)
-                Text("Weekly").tag(Schedule.Kind.weekly)
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            if item.schedule.kind == .once {
-                DatePicker("On", selection: $item.schedule.date, displayedComponents: [.date, .hourAndMinute]).datePickerStyle(.field)
+            if let anchor = item.anchor {
+                AnchorEditor(anchor: Binding(get: { anchor }, set: { item.anchor = $0 }), event: model.event(for: anchor)) { item.anchor = nil }
             } else {
-                DatePicker("At", selection: time, displayedComponents: .hourAndMinute).datePickerStyle(.field)
+                timing
             }
-            if item.schedule.kind == .weekly { weekdays }
             Toggle("Enabled", isOn: $item.enabled)
             Text("Sent only while Nook is running. A run that comes due while Nook is closed or the Mac sleeps is shown as missed, never sent late by itself. It waits for a turn in progress or a permission question to finish.")
                 .font(HotspotText.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
@@ -288,6 +331,23 @@ private struct ScheduleEditor: View {
             }
         }
         .font(HotspotText.body)
+    }
+
+    @ViewBuilder private var timing: some View {
+        Picker("", selection: $item.schedule.kind) {
+            Text("Once").tag(Schedule.Kind.once)
+            Text("Daily").tag(Schedule.Kind.daily)
+            Text("Weekdays").tag(Schedule.Kind.weekdays)
+            Text("Weekly").tag(Schedule.Kind.weekly)
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        if item.schedule.kind == .once {
+            DatePicker("On", selection: $item.schedule.date, displayedComponents: [.date, .hourAndMinute]).datePickerStyle(.field)
+        } else {
+            DatePicker("At", selection: time, displayedComponents: .hourAndMinute).datePickerStyle(.field)
+        }
+        if item.schedule.kind == .weekly { weekdays }
     }
 
     /// The hour and minute as a date today, which is what a DatePicker edits.

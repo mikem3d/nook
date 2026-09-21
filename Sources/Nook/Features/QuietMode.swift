@@ -8,12 +8,16 @@ import AppKit
 /// Not used, on purpose: macOS Focus / Do Not Disturb (readable only with the Focus Status
 /// permission plus an entitlement, or private API), camera and microphone state (no public,
 /// permissionless API) and Google Meet in a browser (indistinguishable from browsing).
-/// Everything is notification driven; there is no timer.
+/// - the synced calendar says the user is in a meeting right now (`nook.quiet.calendar`; does
+///   nothing until calendar sync has been used, since there are no events to go by).
+/// Everything is notification driven. The calendar rule adds the only timer: one, set to the next
+/// time a meeting starts or ends, and none when no meeting lies ahead.
 ///
 /// Once the user toggles by hand, automatic changes stop until Nook is relaunched.
 final class QuietMode: NSObject, Feature, NSMenuItemValidation {
     static let autoKey = "nook.quiet.auto"
     static let appsKey = "nook.quiet.apps"
+    static let calendarKey = "nook.quiet.calendar"
     static let defaultApps = ["us.zoom.xos", "com.microsoft.teams2", "com.microsoft.teams",
                               "com.apple.FaceTime", "com.cisco.webexmeetingsapp"]
 
@@ -23,11 +27,12 @@ final class QuietMode: NSObject, Feature, NSMenuItemValidation {
     private weak var app: AppController?
     private var manual = false
     private var frontmost: (bundleID: String?, name: String?)
+    private var boundary: Timer?
 
     func install(in app: AppController) {
         self.app = app
         Self.current = self
-        UserDefaults.standard.register(defaults: [Self.autoKey: true, Self.appsKey: Self.defaultApps])
+        UserDefaults.standard.register(defaults: [Self.autoKey: true, Self.appsKey: Self.defaultApps, Self.calendarKey: true])
         HUD.shared.isSuppressed = { [weak app] in app?.isQuiet ?? false }
 
         let item = NSMenuItem(title: "Quiet Mode", action: #selector(toggle), keyEquivalent: "")
@@ -42,6 +47,9 @@ final class QuietMode: NSObject, Feature, NSMenuItemValidation {
                                                name: NSApplication.didChangeScreenParametersNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(evaluate),
                                                name: UserDefaults.didChangeNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(evaluate), name: .nookCalendarChanged, object: nil)
+        // Asleep through a meeting's start or end: the timer fires late, so look again on wake.
+        NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(evaluate), name: NSWorkspace.didWakeNotification, object: nil)
         evaluate()
     }
 
@@ -76,12 +84,22 @@ final class QuietMode: NSObject, Feature, NSMenuItemValidation {
             DispatchQueue.main.async { [weak self] in self?.evaluate() }
             return
         }
+        boundary?.invalidate()
+        boundary = nil
         guard let app, !manual else { return }
         let defaults = UserDefaults.standard
-        let wanted = defaults.bool(forKey: Self.autoKey) && Self.shouldBeQuiet(
+        let auto = defaults.bool(forKey: Self.autoKey)
+        let events = auto && defaults.bool(forKey: Self.calendarKey) ? CalendarSync.current?.events ?? [] : []
+        let now = Date()
+        let wanted = auto && (MeetingClock.inMeeting(events, at: now) || Self.shouldBeQuiet(
             frontmostBundleID: frontmost.bundleID, frontmostName: frontmost.name,
-            meetingApps: defaults.stringArray(forKey: Self.appsKey) ?? [], mirroring: Self.isMirroring)
+            meetingApps: defaults.stringArray(forKey: Self.appsKey) ?? [], mirroring: Self.isMirroring))
         if app.isQuiet != wanted { app.isQuiet = wanted }
+        guard let next = MeetingClock.nextBoundary(events, after: now) else { return }
+        let timer = Timer(fire: next, interval: 0, repeats: false) { [weak self] _ in self?.evaluate() }
+        timer.tolerance = 1
+        RunLoop.main.add(timer, forMode: .common)
+        boundary = timer
     }
 
     /// The automatic rule, as a pure function. List entries match a bundle id or an app name, ignoring case.
