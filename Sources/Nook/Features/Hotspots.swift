@@ -40,7 +40,7 @@ final class Hotspots: NSObject, Feature {
     /// By session, not by folder: a reopened agent starts counting again.
     private var turnsSeen: [UUID: Int] = [:]
     /// Session changes arrive many times a second while an agent streams; views only hear of a real change.
-    private var wasFree: [UUID: Bool] = [:]
+    private var lastState: [UUID: TaskScheduler.AgentState] = [:]
     private var plans: [UUID: [AgentTodo]] = [:]
     private var planNews = Set<String>()
 
@@ -160,13 +160,13 @@ final class Hotspots: NSObject, Feature {
             turnsSeen[session.id] = session.turnsCompleted
             turnFinished(window, key: key)
         }
-        let free = Self.isFree(session)
-        if free != wasFree[session.id] ?? true {
-            wasFree[session.id] = free
+        let state = agentState(window)
+        if state != lastState[session.id] {
+            lastState[session.id] = state
             boardModel?.reload()
             TaskHub.shared.agentsChanged()
         }
-        guard free else { return }
+        guard Self.isFree(session) else { return }
         if let next = waiting[key]?.first {
             waiting[key]?.removeFirst()
             run(next, on: window)
@@ -217,13 +217,16 @@ final class Hotspots: NSObject, Feature {
     /// How the scheduler sees each open agent. Two windows on one folder count once, as the first.
     func agentStates() -> [TaskScheduler.Agent] {
         (app?.windows ?? []).map { window in
-            let session = window.session
-            let key = Self.key(for: session)
-            let state: TaskScheduler.AgentState = session.pending != nil ? .pendingPermission
-                : !Self.isFree(session) || outstanding[key] != nil ? .busy
-                : session.lastTurnFailed ? .lastTurnFailed : .idle
-            return TaskScheduler.Agent(key: key, state: state, auto: auto.contains(key), sentThisRun: sentThisRun[key] ?? 0)
+            let key = Self.key(for: window.session)
+            return TaskScheduler.Agent(key: key, state: agentState(window), auto: auto.contains(key), sentThisRun: sentThisRun[key] ?? 0)
         }
+    }
+
+    private func agentState(_ window: AgentWindow) -> TaskScheduler.AgentState {
+        let session = window.session
+        if session.pending != nil { return .pendingPermission }
+        if !Self.isFree(session) || outstanding[Self.key(for: session)] != nil { return .busy }
+        return session.lastTurnFailed ? .lastTurnFailed : .idle
     }
 
     /// The user's own click or key: sends this task now, and starts a fresh automatic run count.
