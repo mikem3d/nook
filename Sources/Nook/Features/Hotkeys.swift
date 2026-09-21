@@ -61,7 +61,7 @@ final class Hotkeys: Feature {
         waiting = waiting.filter { live.contains($0.key) }
         finished = finished.filter { live.contains($0.key) }
         states = states.filter { live.contains($0.key) }
-        if hidden { app.windows.forEach { $0.orderOut(nil) } } // a new agent orders itself front
+        if hidden { app.floatingWindows.forEach { $0.orderOut(nil) } } // a new agent orders itself front
     }
 
     private func candidates(_ windows: [AgentWindow]) -> [Attention.Candidate] {
@@ -119,13 +119,13 @@ final class Hotkeys: Feature {
         } else {
             hidden = true
             app.deactivate()
-            app.windows.forEach { $0.orderOut(nil) }
+            app.floatingWindows.forEach { $0.orderOut(nil) }
         }
     }
 
     private func reveal() {
         guard hidden, let app else { return }
         hidden = false
-        app.windows.forEach { $0.orderFrontRegardless() }
+        app.floatingWindows.forEach { $0.orderFrontRegardless() }
     }
 }

@@ -113,7 +113,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     }
 
     private func buildMenus() {
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem.button?.image = NSImage(systemSymbolName: "rectangle.stack.person.crop", accessibilityDescription: "Nook")
         menu = NSMenu()
         menu.addItem(withTitle: "New Agent…", action: #selector(newAgent), keyEquivalent: "n").target = self
@@ -499,6 +499,9 @@ final class AppController: NSObject, NSApplicationDelegate {
     }
 
     /// The plus orb new agents would appear beside: the default corner's if it has one.
+    /// Every Nook window that floats on the desktop, for "hide all" and similar.
+    var floatingWindows: [NSWindow] { windows + Array(plusOrbs.values) }
+
     var plusOrb: PlusOrbWindow? {
         plusOrbs.first { $0.key.corner == defaultCorner }?.value ?? plusOrbs.values.first
     }

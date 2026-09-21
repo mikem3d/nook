@@ -257,6 +257,9 @@ final class Notifications: NSObject, Feature {
         let pending = windows.filter { $0.session.pending != nil }
         let finished = windows.filter { unseen.contains(ObjectIdentifier($0)) && $0.session.pending == nil }
         let title = NotifyText.needsYou(pending: pending.map(\.session.label), finished: finished.map(\.session.label))
+        // The menu bar icon carries the count of agents waiting on an approval.
+        app?.statusButton?.title = pending.isEmpty ? "" : " \(pending.count)"
+        app?.statusButton?.imagePosition = pending.isEmpty ? .imageOnly : .imageLeft
         guard title != (indicator.isHidden ? nil : indicator.title) else { return }
         indicator.title = title ?? ""
         indicator.isHidden = title == nil
