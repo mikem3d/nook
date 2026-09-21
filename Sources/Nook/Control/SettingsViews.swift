@@ -18,6 +18,8 @@ enum SettingsKeys {
     /// How dark the screen goes behind a conversation (0 is off), and whether a click on it ends the conversation.
     static let overlayOpacity = FocusOverlay.opacityKey
     static let overlayClick = FocusOverlay.clickKey
+    /// Read by the engine when an agent starts (AgentSession's private `Prefs.alwaysAsk`).
+    static let alwaysAsk = "nook.alwaysAsk"
     static let voiceEnabled = "nook.voice.enabled"
     /// A locale identifier such as "en-GB"; empty follows the system.
     static let voiceLocale = "nook.voice.locale"
@@ -36,6 +38,7 @@ struct GeneralSettings: View {
     @AppStorage(SettingsKeys.textSize) private var textSize = TextSize.medium.rawValue
     @AppStorage(SettingsKeys.overlayOpacity) private var overlayOpacity = FocusOverlay.defaultOpacity
     @AppStorage(SettingsKeys.overlayClick) private var overlayClick = true
+    @AppStorage(SettingsKeys.alwaysAsk) private var alwaysAsk = false
     @State private var launchAtLogin = LoginItem.isEnabled
     @State private var loginError = ""
 
@@ -69,6 +72,11 @@ struct GeneralSettings: View {
                 }
             } footer: {
                 Text("Model and corner apply to agents you start from now on.").settingsNote()
+            }
+            Section {
+                Toggle("Always ask before Bash, Write and Edit, even if my Claude Code settings allow them", isOn: $alwaysAsk)
+            } footer: {
+                Text("Normally Nook follows your Claude Code permission settings, so a tool you have allowed there runs without a question. With this on, every command and file change waits for your answer. Applies to agents you start from now on.").settingsNote()
             }
             Section {
                 Picker("Text size", selection: $textSize) {
@@ -198,6 +206,90 @@ struct HotkeySettings: View {
         .formStyle(.grouped)
         .frame(width: paneWidth, height: 480)
     }
+}
+
+// MARK: Notifications
+
+final class NotifyStatusModel: ObservableObject {
+    @Published var status = NotifyCenter.shared.status
+    private var observer: NSObjectProtocol?
+
+    init() {
+        observer = NotificationCenter.default.addObserver(forName: NotifyCenter.statusChanged, object: nil, queue: .main) { [weak self] _ in
+            self?.status = NotifyCenter.shared.status
+        }
+    }
+
+    deinit {
+        if let observer { NotificationCenter.default.removeObserver(observer) }
+    }
+}
+
+struct NotificationSettings: View {
+    @StateObject private var model = NotifyStatusModel()
+    @AppStorage(NotifyPrefs.enabled) private var enabled = true
+    @AppStorage(NotifyPrefs.sound) private var sound = true
+    @AppStorage(NotifyPrefs.audibleApprovals) private var audibleApprovals = true
+    @AppStorage(NotifyPrefs.answerFromNotification) private var answerFromNotification = true
+
+    private static let kinds: [(kind: NotifyEvent.Kind, title: String)] = [
+        (.permission, "An agent needs approval"), (.finished, "A turn finishes"), (.failed, "A turn fails"),
+        (.ended, "An agent stops unexpectedly"), (.autoRun, "A scheduled prompt or queued task starts by itself"),
+        (.taskDue, "A task is due"),
+    ]
+
+    var body: some View {
+        Form {
+            Section {
+                Toggle("Notify me when an agent needs me", isOn: $enabled)
+                switch model.status {
+                case .unavailable:
+                    Text("Available when Nook runs as an app bundle (Nook.app), not from the command line.").settingsNote()
+                case .undetermined:
+                    Button("Turn On Notifications…") { NotifyCenter.shared.requestAuthorisation { _ in } }
+                case .denied:
+                    HStack {
+                        Text("Notifications for Nook are switched off in System Settings.").settingsNote()
+                        Button("Open System Settings") { NotifyCenter.openSystemSettings() }
+                    }
+                case .allowed:
+                    EmptyView()
+                }
+            } footer: {
+                Text("Never about the agent you are talking to while its window is in view. Agents that finish together share one notification, and a turn that ends within three seconds is skipped.").settingsNote()
+            }
+            Section("Notify when") {
+                ForEach(Self.kinds, id: \.kind) { entry in
+                    StoredToggle(entry.title, key: NotifyPrefs.key(entry.kind))
+                }
+            }
+            .disabled(!enabled)
+            Section {
+                Toggle("Play a sound", isOn: $sound)
+                Toggle("Keep approvals audible in quiet mode", isOn: $audibleApprovals)
+                Toggle("Allow approving from notifications", isOn: $answerFromNotification)
+            } footer: {
+                Text("In quiet mode notifications go silently to Notification Centre. Allow and Deny work without opening Nook and show the exact command or path. A request that looks destructive (rm, sudo, a forced push, a file outside the project) or is too long to show whole never gets an Allow button: open the agent to read it.").settingsNote()
+            }
+            .disabled(!enabled)
+        }
+        .formStyle(.grouped)
+        .frame(width: paneWidth, height: 600)
+        .onAppear { NotifyCenter.shared.refresh() } // the answer may have changed in System Settings
+    }
+}
+
+/// A toggle whose preference key is worked out at run time, which a property's @AppStorage cannot take.
+private struct StoredToggle: View {
+    private let title: String
+    @AppStorage private var isOn: Bool
+
+    init(_ title: String, key: String) {
+        self.title = title
+        _isOn = AppStorage(wrappedValue: true, key)
+    }
+
+    var body: some View { Toggle(title, isOn: $isOn) }
 }
 
 // MARK: Quiet mode

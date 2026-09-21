@@ -23,6 +23,7 @@ final class SettingsFeature: NSObject, Feature, NSWindowDelegate {
             tabs.tabStyle = .toolbar
             tabs.add("General", "gearshape", GeneralSettings())
             tabs.add("Hotkeys", "keyboard", HotkeySettings())
+            tabs.add("Notifications", "bell.badge", NotificationSettings())
             tabs.add("Quiet Mode", "moon", QuietSettings())
             tabs.add("Voice", "mic", VoiceSettings())
             tabs.add("About", "info.circle", AboutSettings())
