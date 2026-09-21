@@ -126,26 +126,28 @@ enum Markdown {
 
     // MARK: styling
 
-    static func render(_ source: String, size: CGFloat = 13, color: NSColor = .labelColor) -> NSAttributedString {
+    /// Sizes and spacing follow the text-size setting; `scale` maps the numbers below, written for `medium`.
+    static func render(_ source: String, color: NSColor = .labelColor) -> NSAttributedString {
         let out = NSMutableAttributedString()
-        let body = NSFont.systemFont(ofSize: size)
+        let scale = TextSize.current
+        let body = NSFont.systemFont(ofSize: scale.points(.body))
         for block in blocks(source) {
             switch block {
             case let .paragraph(text):
-                out.append(styled(inline(text, font: body, color: color), spacing: 7))
+                out.append(styled(inline(text, font: body, color: color), spacing: scale.metric(8)))
             case let .heading(level, text):
-                let bump: CGFloat = level == 1 ? 5 : level == 2 ? 3 : level == 3 ? 1 : 0
-                let font = NSFont.systemFont(ofSize: size + bump, weight: level <= 2 ? .bold : .semibold)
-                out.append(styled(inline(text, font: font, color: color), spacing: 6, before: out.length == 0 ? 0 : 5))
+                let bump: CGFloat = level == 1 ? 6 : level == 2 ? 4 : level == 3 ? 2 : 0
+                let font = NSFont.systemFont(ofSize: scale.points(TextSize.Role.body.base + bump), weight: level <= 2 ? .bold : .semibold)
+                out.append(styled(inline(text, font: font, color: color), spacing: scale.metric(7), before: out.length == 0 ? 0 : scale.metric(6)))
             case let .bullet(level, text):
-                out.append(listItem("•", text, level: level, markerWidth: 14, font: body, color: color))
+                out.append(listItem("•", text, level: level, markerWidth: scale.metric(17), font: body, color: color))
             case let .numbered(level, marker, text):
-                out.append(listItem(marker, text, level: level, markerWidth: 24, font: body, color: color))
+                out.append(listItem(marker, text, level: level, markerWidth: scale.metric(30), font: body, color: color))
             case let .code(language, text):
-                out.append(codeBlock(language: language, code: text, size: size))
+                out.append(codeBlock(language: language, code: text))
             case .rule:
                 let line = NSAttributedString(string: "———", attributes: [.font: body, .foregroundColor: NSColor.tertiaryLabelColor])
-                out.append(styled(line, spacing: 7))
+                out.append(styled(line, spacing: scale.metric(8)))
             }
         }
         return out
@@ -158,11 +160,11 @@ enum Markdown {
         let out = NSMutableAttributedString(attributedString: text)
         out.mutableString.replaceOccurrences(of: "\n", with: "\u{2028}", options: [], range: NSRange(location: 0, length: out.length))
         let last = out.length > 0 ? out.attributes(at: out.length - 1, effectiveRange: nil) : [:]
-        out.append(NSAttributedString(string: "\n", attributes: [.font: last[.font] ?? NSFont.systemFont(ofSize: 13)]))
+        out.append(NSAttributedString(string: "\n", attributes: [.font: last[.font] ?? TextSize.font(.body)]))
         let style = NSMutableParagraphStyle()
         style.paragraphSpacing = spacing
         style.paragraphSpacingBefore = before
-        style.lineSpacing = 1.5
+        style.lineSpacing = TextSize.metric(2)
         configure?(style)
         out.addAttribute(.paragraphStyle, value: style, range: NSRange(location: 0, length: out.length))
         return out
@@ -172,26 +174,28 @@ enum Markdown {
                                  font: NSFont, color: NSColor) -> NSAttributedString {
         let line = NSMutableAttributedString(string: marker + "\t", attributes: [.font: font, .foregroundColor: NSColor.secondaryLabelColor])
         line.append(inline(text, font: font, color: color))
-        let indent = 4 + CGFloat(level) * 16
-        return styled(line, spacing: 3) { style in
+        let indent = TextSize.metric(5) + CGFloat(level) * TextSize.metric(20)
+        return styled(line, spacing: TextSize.metric(4)) { style in
             style.firstLineHeadIndent = indent
             style.headIndent = indent + markerWidth
             style.tabStops = [NSTextTab(textAlignment: .left, location: indent + markerWidth)]
         }
     }
 
-    private static func codeBlock(language: String, code: String, size: CGFloat) -> NSAttributedString {
+    private static func codeBlock(language: String, code: String) -> NSAttributedString {
+        let scale = TextSize.current
+        let inset = scale.metric(12)
         func style(before: CGFloat = 0, after: CGFloat = 0) -> NSParagraphStyle {
             let style = NSMutableParagraphStyle()
-            style.firstLineHeadIndent = 10
-            style.headIndent = 10
-            style.tailIndent = -10
+            style.firstLineHeadIndent = inset
+            style.headIndent = inset
+            style.tailIndent = -inset
             style.paragraphSpacingBefore = before
             style.paragraphSpacing = after
             style.lineBreakMode = .byCharWrapping
             return style
         }
-        let small = NSFont.systemFont(ofSize: size - 3, weight: .medium)
+        let small = TextSize.font(.caption, weight: .medium)
         let out = NSMutableAttributedString()
         if !language.isEmpty {
             out.append(NSAttributedString(string: language + "   ", attributes: [.font: small, .foregroundColor: NSColor.tertiaryLabelColor]))
@@ -199,17 +203,17 @@ enum Markdown {
         out.append(NSAttributedString(string: "Copy", attributes: [
             .font: small, .foregroundColor: NSColor.secondaryLabelColor, .link: actionURL, .nookCopy: code]))
         out.append(NSAttributedString(string: "\n", attributes: [.font: small]))
-        out.addAttribute(.paragraphStyle, value: style(before: 6, after: 3), range: NSRange(location: 0, length: out.length))
+        out.addAttribute(.paragraphStyle, value: style(before: scale.metric(7), after: scale.metric(4)), range: NSRange(location: 0, length: out.length))
 
-        let mono = NSFont.monospacedSystemFont(ofSize: size - 1, weight: .regular)
+        let mono = TextSize.mono(.code)
         let bodyStart = out.length
         out.append(NSAttributedString(string: code + "\n", attributes: [.font: mono, .foregroundColor: NSColor.labelColor, .paragraphStyle: style()]))
         let lastLine = (code as NSString).range(of: "\n", options: .backwards)
         let lastStart = bodyStart + (lastLine.location == NSNotFound ? 0 : lastLine.location + 1)
-        out.addAttribute(.paragraphStyle, value: style(after: 7), range: NSRange(location: lastStart, length: out.length - lastStart))
+        out.addAttribute(.paragraphStyle, value: style(after: scale.metric(8)), range: NSRange(location: lastStart, length: out.length - lastStart))
         out.addAttribute(.nookCode, value: code, range: NSRange(location: 0, length: out.length))
         // A sliver of a line outside the box, so the next block does not butt against it.
-        out.append(NSAttributedString(string: "\n", attributes: [.font: NSFont.systemFont(ofSize: 5)]))
+        out.append(NSAttributedString(string: "\n", attributes: [.font: NSFont.systemFont(ofSize: scale.metric(6))]))
         return out
     }
 

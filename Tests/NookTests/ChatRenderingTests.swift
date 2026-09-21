@@ -207,7 +207,7 @@ final class LogViewTests: XCTestCase {
 
 final class ChatPanelTests: XCTestCase {
     /// Builds the panel off screen (never ordered front) and lays it out in each state.
-    func testPanelLaysOutInEveryState() {
+    func testPanelLaysOutInEveryState() throws {
         let panel = ChatPanel()
         let session = AgentSession(label: "demo", cwd: nil)
         panel.render(session)
@@ -220,6 +220,31 @@ final class ChatPanelTests: XCTestCase {
         panel.render(session)
         panel.contentView?.layoutSubtreeIfNeeded()
         XCTAssertFalse(panel.isVisible)
-        XCTAssertEqual(panel.frame.width, 680)
+        XCTAssertEqual(panel.frame.size, ChatMetrics.panelSize(saved: nil, textSize: .current))
+
+        // Live text-size changes: at every size the content still fits the panel's smallest frame
+        // (Auto Layout would otherwise push the window wider or taller) and the input fits its font.
+        let before = TextSize.current
+        defer { TextSize.current = before }
+        session.simulate(.alert, text: "Allow Bash?", log: .system)
+        for size in TextSize.allCases {
+            TextSize.current = size
+            let minimum = ChatMetrics.minimumSize(textSize: size)
+            panel.setFrame(NSRect(origin: .zero, size: minimum), display: false)
+            panel.render(session)
+            panel.contentView?.layoutSubtreeIfNeeded()
+            XCTAssertEqual(panel.frame.size, minimum, "\(size)")
+            let input = try XCTUnwrap(Self.find(InputBox.self, in: panel.contentView))
+            let font = try XCTUnwrap(input.textView.font)
+            XCTAssertEqual(font.pointSize, size.points(.input))
+            XCTAssertGreaterThanOrEqual(input.frame.height, NSLayoutManager().defaultLineHeight(for: font) + 8, "\(size)")
+        }
+    }
+
+    private static func find<T: NSView>(_ type: T.Type, in view: NSView?) -> T? {
+        guard let view else { return nil }
+        if let match = view as? T { return match }
+        for child in view.subviews { if let match = find(type, in: child) { return match } }
+        return nil
     }
 }

@@ -5,9 +5,9 @@ import AppKit
 final class ChatPanel: NSPanel {
     weak var controller: AppController?
 
-    static let sizeKey = "nook.chat.size"
-    private static let defaultSize = NSSize(width: 680, height: 440)
-    private static let minHeight: CGFloat = 220
+    /// The panel's size at the `medium` text size; what is shown is this times the setting. (The
+    /// older "nook.chat.size" held unscaled points for a smaller default and is no longer read.)
+    static let sizeKey = "nook.chat.baseSize"
     private static let bottomMargin: CGFloat = 24
 
     private weak var session: AgentSession?
@@ -29,12 +29,18 @@ final class ChatPanel: NSPanel {
     private let attachmentRow = NSStackView()
     private let input = InputBox()
     private let stop = NSButton(title: "Stop", target: nil, action: nil)
+    private let deny = NSButton(title: "Deny", target: nil, action: nil)
+    private let allow = NSButton(title: "Allow", target: nil, action: nil)
+    private let column = NSStackView()
+    private var top = NSStackView()
+    private var barHeight: NSLayoutConstraint!
+    private var rowWidths: [NSLayoutConstraint] = []
 
     init() {
-        super.init(contentRect: NSRect(origin: .zero, size: Self.defaultSize),
+        super.init(contentRect: NSRect(origin: .zero, size: ChatMetrics.panelSize(saved: nil, textSize: .current)),
                    styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         isFloatingPanel = true
-        level = .floating
+        level = NookLevel.chat
         hidesOnDeactivate = false
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         isOpaque = false
@@ -53,30 +59,27 @@ final class ChatPanel: NSPanel {
         glass.onFiles = { [weak self] in self?.attach($0) }
         contentView = glass
 
-        heading.font = .systemFont(ofSize: 13, weight: .semibold)
-        detail.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
         detail.textColor = .secondaryLabelColor
         detail.alignment = .right
         detail.lineBreakMode = .byTruncatingHead
         detail.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        let top = NSStackView(views: [heading, detail])
+        top = NSStackView(views: [heading, detail])
         top.distribution = .fill
 
-        contextBar.heightAnchor.constraint(equalToConstant: 3).isActive = true
-        summary.font = .systemFont(ofSize: 11)
+        barHeight = contextBar.heightAnchor.constraint(equalToConstant: 3)
+        barHeight.isActive = true
         summary.textColor = .secondaryLabelColor
         summary.lineBreakMode = .byTruncatingTail
         summary.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        permissionTool.font = .systemFont(ofSize: 12, weight: .semibold)
-        permissionDetail.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
         permissionDetail.textColor = .secondaryLabelColor
         permissionDetail.lineBreakMode = .byTruncatingMiddle
         permissionDetail.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         permissionDetail.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        let deny = NSButton(title: "Deny", target: self, action: #selector(denyTapped))
+        (deny.target, deny.action) = (self, #selector(denyTapped))
         deny.toolTip = "Deny (⌘⌫)"
-        let allow = NSButton(title: "Allow", target: self, action: #selector(allowTapped))
+        (allow.target, allow.action) = (self, #selector(allowTapped))
+        for button in [deny, allow] { button.bezelStyle = .rounded }
         allow.toolTip = "Allow (⌘↩)"
         allow.bezelColor = .controlAccentColor
         permissionRow.setViews([permissionTool, permissionDetail, deny, allow], in: .leading)
@@ -84,7 +87,6 @@ final class ChatPanel: NSPanel {
         permissionRow.isHidden = true
 
         for row in [chipRow, attachmentRow] {
-            row.spacing = 6
             row.distribution = .gravityAreas
             row.setClippingResistancePriority(.defaultLow, for: .horizontal)
             row.isHidden = true
@@ -96,7 +98,6 @@ final class ChatPanel: NSPanel {
         input.textView.onFiles = { [weak self] in self?.attach($0) }
         stop.target = self
         stop.action = #selector(stopTapped)
-        stop.controlSize = .small
         stop.bezelStyle = .rounded
         stop.toolTip = "Stop (⌘.)"
         stop.isHidden = true
@@ -106,12 +107,9 @@ final class ChatPanel: NSPanel {
         inputRow.distribution = .fill
 
         let rows: [NSView] = [top, contextBar, summary, log, permissionRow, chipRow, attachmentRow, inputRow]
-        let column = NSStackView(views: rows)
+        column.setViews(rows, in: .top)
         column.orientation = .vertical
         column.alignment = .leading
-        column.spacing = 8
-        column.setCustomSpacing(5, after: top)
-        column.edgeInsets = NSEdgeInsets(top: 12, left: 14, bottom: 14, right: 14)
         column.translatesAutoresizingMaskIntoConstraints = false
         log.setContentHuggingPriority(.init(1), for: .vertical)
         log.setContentCompressionResistancePriority(.init(1), for: .vertical)
@@ -131,9 +129,50 @@ final class ChatPanel: NSPanel {
             grip.topAnchor.constraint(equalTo: glass.topAnchor),
             grip.heightAnchor.constraint(equalToConstant: 7),
         ])
-        for view in rows {
-            view.widthAnchor.constraint(equalTo: column.widthAnchor, constant: -28).isActive = true
+        rowWidths = rows.map { $0.widthAnchor.constraint(equalTo: column.widthAnchor) }
+        NSLayoutConstraint.activate(rowWidths)
+        applyTextSize()
+        NotificationCenter.default.addObserver(self, selector: #selector(textSizeChanged), name: TextSize.changed, object: nil)
+    }
+
+    // MARK: text size
+
+    /// Every font and the spacing that depends on it. Called once at launch and whenever the setting changes.
+    private func applyTextSize() {
+        let size = TextSize.current
+        heading.font = TextSize.font(.title, weight: .semibold)
+        detail.font = TextSize.digits(.secondary)
+        summary.font = TextSize.font(.secondary)
+        permissionTool.font = TextSize.font(.label, weight: .semibold)
+        permissionDetail.font = TextSize.mono(.secondary)
+        let control: NSControl.ControlSize = size.rawValue > 1 ? .large : .regular
+        for button in [deny, allow, stop] {
+            button.controlSize = control
+            button.font = .systemFont(ofSize: max(size.points(.secondary), NSFont.systemFontSize(for: control)))
         }
+        let side = size.metric(16)
+        column.spacing = size.metric(10)
+        column.setCustomSpacing(size.metric(6), after: top)
+        column.edgeInsets = NSEdgeInsets(top: size.metric(14), left: side, bottom: size.metric(16), right: side)
+        rowWidths.forEach { $0.constant = -side * 2 }
+        barHeight.constant = size.metric(4)
+        permissionRow.spacing = size.metric(8)
+        chipRow.spacing = size.metric(7)
+        attachmentRow.spacing = size.metric(7)
+        input.applyTextSize()
+    }
+
+    /// Live: restyle, redraw the log and the chips at the new size, and resize the panel in place.
+    @objc private func textSizeChanged() {
+        applyTextSize()
+        log.reset()
+        chipTitles = []
+        showAttachments()
+        if let session { render(session) }
+        guard isVisible, let screen = screen ?? NSScreen.main else { return }
+        setFrame(placement(on: screen, height: savedSize.height), display: true)
+        log.scrollToBottom()
+        controller?.reservedBottomRect = frame
     }
 
     override var canBecomeKey: Bool { true }
@@ -157,6 +196,15 @@ final class ChatPanel: NSPanel {
         case ([.command], "\u{7F}"), ([.command], "\u{8}"):
             guard session?.pending != nil else { break }
             denyTapped()
+            return true
+        case ([.command], "="), ([.command, .shift], "+"), ([.command, .shift], "="), ([.command], "+"):
+            if !TextSize.step(1) { NSSound.beep() }
+            return true
+        case ([.command], "-"):
+            if !TextSize.step(-1) { NSSound.beep() }
+            return true
+        case ([.command], "0"):
+            TextSize.current = .medium
             return true
         case ([.command], "z"):
             if let undo = (firstResponder as? NSTextView)?.undoManager, undo.canUndo { undo.undo() }
@@ -223,23 +271,22 @@ final class ChatPanel: NSPanel {
     // MARK: size and placement
 
     private var savedSize: NSSize {
-        guard let stored = UserDefaults.standard.string(forKey: Self.sizeKey) else { return Self.defaultSize }
-        let size = NSSizeFromString(stored)
-        return size.width >= 320 && size.height >= Self.minHeight ? size : Self.defaultSize
+        ChatMetrics.panelSize(saved: UserDefaults.standard.string(forKey: Self.sizeKey).map(NSSizeFromString), textSize: .current)
     }
 
     /// Bottom-centred on the screen's visible area, clamped to fit it.
     private func placement(on screen: NSScreen, height: CGFloat) -> NSRect {
         let area = screen.visibleFrame
         let width = min(savedSize.width, area.width - 32)
-        let clamped = min(max(height, Self.minHeight), area.height - Self.bottomMargin * 2)
+        let clamped = min(max(height, ChatMetrics.minimumSize(textSize: .current).height), area.height - Self.bottomMargin * 2)
         return NSRect(x: (area.midX - width / 2).rounded(), y: area.minY + Self.bottomMargin, width: width, height: clamped.rounded())
     }
 
     private func resize(toTop y: CGFloat?) {
         guard let screen = screen ?? NSScreen.main else { return }
         guard let y else {
-            UserDefaults.standard.set(NSStringFromSize(NSSize(width: savedSize.width, height: frame.height)), forKey: Self.sizeKey)
+            let base = ChatMetrics.baseSize(of: NSSize(width: savedSize.width, height: frame.height), textSize: .current)
+            UserDefaults.standard.set(NSStringFromSize(base), forKey: Self.sizeKey)
             return
         }
         setFrame(placement(on: screen, height: y - (screen.visibleFrame.minY + Self.bottomMargin)), display: true)

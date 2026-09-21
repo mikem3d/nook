@@ -58,10 +58,20 @@ final class PixelFont {
         }
     }
 
-    /// Size of one font pixel in points at an art scale. One art pixel at 1x and 1.5x (11 pt and
-    /// 16.5 pt text), half an art pixel at 2x (11 pt), so glyph pixels always sit on the art grid
-    /// and are a whole number of device pixels on a Retina display.
-    static func pixel(atScale s: CGFloat) -> CGFloat { s >= 2 ? s / 2 : s }
+    /// Size of one font pixel in points: as large as the header bar allows (one art pixel, `s`),
+    /// held to 1.5 pt so a 2x window still fits useful text in its bubble, moved half a point by
+    /// the text-size setting, and snapped down to a whole number of device pixels so glyphs stay
+    /// crisp. On a Retina display that is 1 pt at 1x, 1.5 pt at 1.5x and 2x (16.5 pt text), and
+    /// 2 pt at 2x with large text; on a 1x display 1.5 pt is not pixel-exact, so 2x windows get 1 pt.
+    static func pixel(atScale s: CGFloat, backing: CGFloat = 2, step: Int = TextSize.current.pixelStep) -> CGFloat {
+        let device = 1 / max(backing.rounded(), 1)
+        let wanted = min(min(s, 1.5) + CGFloat(step) * 0.5, s)
+        return max((wanted / device).rounded(.down) * device, 1)
+    }
+
+    /// Width of the speech bubble's text area in art pixels. Large glyphs get nearly the whole
+    /// chamber so a line still holds a few words.
+    static func bubbleWidth(atScale s: CGFloat, pixel fp: CGFloat) -> CGFloat { fp * 2 <= s ? 112 : 160 }
 
     let pixelated: Bool
     private let font: CTFont

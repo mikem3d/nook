@@ -13,6 +13,11 @@ enum SettingsKeys {
     /// The art theme's id, and which of its scenes new agents get (see `ScenePrefs`).
     static let theme = ScenePrefs.themeKey
     static let newAgentScene = ScenePrefs.newAgentKey
+    /// A `TextSize` multiplier; see TextSize.swift.
+    static let textSize = TextSize.key
+    /// How dark the screen goes behind a conversation (0 is off), and whether a click on it ends the conversation.
+    static let overlayOpacity = FocusOverlay.opacityKey
+    static let overlayClick = FocusOverlay.clickKey
     static let voiceEnabled = "nook.voice.enabled"
     /// A locale identifier such as "en-GB"; empty follows the system.
     static let voiceLocale = "nook.voice.locale"
@@ -28,6 +33,9 @@ struct GeneralSettings: View {
     @AppStorage(SettingsKeys.scale) private var scale = "auto"
     @AppStorage(SettingsKeys.theme) private var theme = ScenePrefs.defaultTheme
     @AppStorage(SettingsKeys.newAgentScene) private var newAgentScene = ScenePrefs.rotate
+    @AppStorage(SettingsKeys.textSize) private var textSize = TextSize.medium.rawValue
+    @AppStorage(SettingsKeys.overlayOpacity) private var overlayOpacity = FocusOverlay.defaultOpacity
+    @AppStorage(SettingsKeys.overlayClick) private var overlayClick = true
     @State private var launchAtLogin = LoginItem.isEnabled
     @State private var loginError = ""
 
@@ -63,6 +71,31 @@ struct GeneralSettings: View {
                 Text("Model and corner apply to agents you start from now on.").settingsNote()
             }
             Section {
+                Picker("Text size", selection: $textSize) {
+                    ForEach(TextSize.allCases, id: \.self) { Text($0.title).tag($0.rawValue) }
+                }
+                Text("The quick brown fox jumps over the lazy dog.")
+                    .font(.system(size: TextSize.nearest(to: textSize).points(.body)))
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity, minHeight: 30, alignment: .leading)
+                    .accessibilityLabel("Preview of chat text at this size")
+            } footer: {
+                Text("Applies at once to the chat, notices and prompts, and to the pixel text in agent windows. In the chat, ⌘+ and ⌘− change it and ⌘0 resets it.").settingsNote()
+            }
+            Section {
+                Slider(value: $overlayOpacity, in: 0...0.8) {
+                    Text("Dim the screen")
+                } minimumValueLabel: {
+                    Text("Off").font(.caption)
+                } maximumValueLabel: {
+                    Text("Dark").font(.caption)
+                }
+                Toggle("Click the dimmed screen to end the conversation", isOn: $overlayClick)
+                    .disabled(overlayOpacity <= 0)
+            } footer: {
+                Text("While you talk to an agent, everything but its window and the chat is dimmed. Never during quiet mode or a screen grab. With clicking off, clicks pass through to the app underneath.").settingsNote()
+            }
+            Section {
                 Picker("Theme", selection: $theme) {
                     ForEach(Self.themes, id: \.id) { Text($0.name).tag($0.id) }
                 }
@@ -96,7 +129,7 @@ struct GeneralSettings: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: paneWidth, height: 450)
+        .frame(width: paneWidth, height: 680)
     }
 }
 
