@@ -43,16 +43,20 @@ final class CalendarBridge {
         var notes: String
     }
 
+    /// The user's `claude`; tests put a script in its place.
+    private let executable: String?
     private var process: Process?
     private var timeout: DispatchWorkItem?
     private var stopped: Failure?
+
+    init(executable: String? = ClaudeLocator.path) { self.executable = executable }
 
     var isRunning: Bool { process != nil }
 
     /// Completes on the main queue.
     func run(_ job: Job, timeout seconds: TimeInterval = 240, completion: @escaping (Result<BridgeOutput, Failure>) -> Void) {
         guard process == nil else { return completion(.failure(.busy)) }
-        guard let claude = ClaudeLocator.path else { return completion(.failure(.noClaude)) }
+        guard let claude = executable else { return completion(.failure(.noClaude)) }
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("nook-calendar-" + UUID().uuidString)
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
 
