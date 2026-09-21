@@ -8,7 +8,10 @@ final class ChatPanel: NSPanel {
     /// The panel's size at the `medium` text size; what is shown is this times the setting. (The
     /// older "nook.chat.size" held unscaled points for a smaller default and is no longer read.)
     static let sizeKey = "nook.chat.baseSize"
-    private static let bottomMargin: CGFloat = 24
+    /// The conversation takes over most of the screen; the input bar floats under the log.
+    private static let screenShare: CGFloat = 0.9
+    private static let inputWidthShare: CGFloat = 0.6
+    private static let inputGap: CGFloat = 14
 
     private weak var session: AgentSession?
     private var drafts: [UUID: String] = [:]
@@ -57,7 +60,19 @@ final class ChatPanel: NSPanel {
         glass.layer?.cornerRadius = 14
         glass.layer?.masksToBounds = true
         glass.onFiles = { [weak self] in self?.attach($0) }
-        contentView = glass
+
+        // The log is one large card; the input floats beneath it as its own bar. The panel itself
+        // is clear, so a click in the gap between them falls through to the focus overlay.
+        let inputGlass = DropGlass()
+        inputGlass.material = .hudWindow
+        inputGlass.blendingMode = .behindWindow
+        inputGlass.state = .active
+        inputGlass.wantsLayer = true
+        inputGlass.layer?.cornerRadius = 18
+        inputGlass.layer?.masksToBounds = true
+        inputGlass.onFiles = { [weak self] in self?.attach($0) }
+        let container = NSView()
+        contentView = container
 
         detail.textColor = .secondaryLabelColor
         detail.alignment = .right
@@ -106,7 +121,7 @@ final class ChatPanel: NSPanel {
         inputRow.alignment = .centerY
         inputRow.distribution = .fill
 
-        let rows: [NSView] = [top, contextBar, summary, log, permissionRow, chipRow, attachmentRow, inputRow]
+        let rows: [NSView] = [top, contextBar, summary, log, permissionRow, chipRow, attachmentRow]
         column.setViews(rows, in: .top)
         column.orientation = .vertical
         column.alignment = .leading
@@ -114,20 +129,31 @@ final class ChatPanel: NSPanel {
         log.setContentHuggingPriority(.init(1), for: .vertical)
         log.setContentCompressionResistancePriority(.init(1), for: .vertical)
 
-        let grip = ResizeGrip()
-        grip.translatesAutoresizingMaskIntoConstraints = false
-        grip.onDrag = { [weak self] in self?.resize(toTop: $0) }
+        for view in [glass, inputGlass, inputRow] as [NSView] { view.translatesAutoresizingMaskIntoConstraints = false }
+        container.addSubview(glass)
+        container.addSubview(inputGlass)
         glass.addSubview(column)
-        glass.addSubview(grip)
+        inputGlass.addSubview(inputRow)
+        let inputWidth = inputGlass.widthAnchor.constraint(equalTo: container.widthAnchor, multiplier: Self.inputWidthShare)
+        inputWidth.priority = .defaultHigh
         NSLayoutConstraint.activate([
+            glass.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            glass.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            glass.topAnchor.constraint(equalTo: container.topAnchor),
+            glass.bottomAnchor.constraint(equalTo: inputGlass.topAnchor, constant: -Self.inputGap),
+            inputGlass.centerXAnchor.constraint(equalTo: container.centerXAnchor),
+            inputGlass.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            inputWidth,
+            inputGlass.widthAnchor.constraint(greaterThanOrEqualToConstant: 480),
+            inputGlass.widthAnchor.constraint(lessThanOrEqualTo: container.widthAnchor),
+            inputRow.leadingAnchor.constraint(equalTo: inputGlass.leadingAnchor, constant: 14),
+            inputRow.trailingAnchor.constraint(equalTo: inputGlass.trailingAnchor, constant: -14),
+            inputRow.topAnchor.constraint(equalTo: inputGlass.topAnchor, constant: 10),
+            inputRow.bottomAnchor.constraint(equalTo: inputGlass.bottomAnchor, constant: -10),
             column.leadingAnchor.constraint(equalTo: glass.leadingAnchor),
             column.trailingAnchor.constraint(equalTo: glass.trailingAnchor),
             column.topAnchor.constraint(equalTo: glass.topAnchor),
             column.bottomAnchor.constraint(equalTo: glass.bottomAnchor),
-            grip.leadingAnchor.constraint(equalTo: glass.leadingAnchor),
-            grip.trailingAnchor.constraint(equalTo: glass.trailingAnchor),
-            grip.topAnchor.constraint(equalTo: glass.topAnchor),
-            grip.heightAnchor.constraint(equalToConstant: 7),
         ])
         rowWidths = rows.map { $0.widthAnchor.constraint(equalTo: column.widthAnchor) }
         NSLayoutConstraint.activate(rowWidths)
@@ -172,7 +198,6 @@ final class ChatPanel: NSPanel {
         guard isVisible, let screen = screen ?? NSScreen.main else { return }
         setFrame(placement(on: screen, height: savedSize.height), display: true)
         log.scrollToBottom()
-        controller?.reservedBottomRect = frame
     }
 
     override var canBecomeKey: Bool { true }
@@ -274,22 +299,11 @@ final class ChatPanel: NSPanel {
         ChatMetrics.panelSize(saved: UserDefaults.standard.string(forKey: Self.sizeKey).map(NSSizeFromString), textSize: .current)
     }
 
-    /// Bottom-centred on the screen's visible area, clamped to fit it.
-    private func placement(on screen: NSScreen, height: CGFloat) -> NSRect {
+    /// Centred, covering most of the screen's visible area.
+    private func placement(on screen: NSScreen, height: CGFloat = 0) -> NSRect {
         let area = screen.visibleFrame
-        let width = min(savedSize.width, area.width - 32)
-        let clamped = min(max(height, ChatMetrics.minimumSize(textSize: .current).height), area.height - Self.bottomMargin * 2)
-        return NSRect(x: (area.midX - width / 2).rounded(), y: area.minY + Self.bottomMargin, width: width, height: clamped.rounded())
-    }
-
-    private func resize(toTop y: CGFloat?) {
-        guard let screen = screen ?? NSScreen.main else { return }
-        guard let y else {
-            let base = ChatMetrics.baseSize(of: NSSize(width: savedSize.width, height: frame.height), textSize: .current)
-            UserDefaults.standard.set(NSStringFromSize(base), forKey: Self.sizeKey)
-            return
-        }
-        setFrame(placement(on: screen, height: y - (screen.visibleFrame.minY + Self.bottomMargin)), display: true)
+        let size = NSSize(width: (area.width * Self.screenShare).rounded(), height: (area.height * Self.screenShare).rounded())
+        return NSRect(x: (area.midX - size.width / 2).rounded(), y: (area.midY - size.height / 2).rounded(), width: size.width, height: size.height)
     }
 
     // MARK: rendering

@@ -287,7 +287,9 @@ final class AppController: NSObject, NSApplicationDelegate {
         }
         window.refresh()
         chat.present(window.session, on: screen(of: window))
-        reservedBottomRect = chat.frame
+        // The chat covers most of the screen, so nothing is reserved for it; the agent being
+        // talked to stays on top of it so its dwarf is still visible while it works.
+        window.orderFrontRegardless()
         NotificationCenter.default.post(name: .nookActiveChanged, object: self)
     }
 
