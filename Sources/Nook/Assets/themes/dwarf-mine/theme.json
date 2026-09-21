@@ -412,6 +412,75 @@
       "z": 2.5
     }
   ],
+  "hotspots": [
+    {
+      "id": "tasks",
+      "name": "Task board",
+      "sheet": "hotspots/tasks.png",
+      "frame": [
+        22,
+        22
+      ],
+      "levels": 6,
+      "hit": [
+        1,
+        1,
+        20,
+        20
+      ],
+      "position": [
+        63,
+        30
+      ],
+      "z": 0.6,
+      "news": {
+        "sprite": "hotspots/tasks_news.png",
+        "position": [
+          16,
+          16
+        ]
+      }
+    },
+    {
+      "id": "calendar",
+      "name": "Calendar",
+      "sheet": "hotspots/calendar.png",
+      "frame": [
+        17,
+        18
+      ],
+      "levels": 1,
+      "hit": [
+        1,
+        1,
+        15,
+        16
+      ],
+      "position": [
+        118,
+        33
+      ],
+      "z": 0.6,
+      "news": {
+        "sprite": "hotspots/calendar_news.png",
+        "position": [
+          12,
+          0
+        ]
+      },
+      "digits": {
+        "sheet": "hotspots/digits.png",
+        "frame": [
+          3,
+          5
+        ],
+        "position": [
+          5,
+          3
+        ]
+      }
+    }
+  ],
   "scenes": [
     {
       "id": "workshop",
@@ -470,6 +539,24 @@
             24
           ],
           "z": 2.5
+        }
+      ],
+      "hotspots": [
+        {
+          "id": "tasks",
+          "position": [
+            63,
+            30
+          ],
+          "z": 0.6
+        },
+        {
+          "id": "calendar",
+          "position": [
+            118,
+            33
+          ],
+          "z": 2.2
         }
       ],
       "ambient": [
@@ -557,6 +644,24 @@
           "z": 2.5
         }
       ],
+      "hotspots": [
+        {
+          "id": "tasks",
+          "position": [
+            63,
+            30
+          ],
+          "z": 0.6
+        },
+        {
+          "id": "calendar",
+          "position": [
+            118,
+            33
+          ],
+          "z": 0.6
+        }
+      ],
       "ambient": [
         {
           "name": "fire",
@@ -635,6 +740,24 @@
             24
           ],
           "z": 2.5
+        }
+      ],
+      "hotspots": [
+        {
+          "id": "tasks",
+          "position": [
+            63,
+            30
+          ],
+          "z": 0.6
+        },
+        {
+          "id": "calendar",
+          "position": [
+            118,
+            33
+          ],
+          "z": 0.6
         }
       ],
       "ambient": [
@@ -732,6 +855,24 @@
           "z": 2.5
         }
       ],
+      "hotspots": [
+        {
+          "id": "tasks",
+          "position": [
+            63,
+            30
+          ],
+          "z": 0.6
+        },
+        {
+          "id": "calendar",
+          "position": [
+            118,
+            33
+          ],
+          "z": 0.6
+        }
+      ],
       "ambient": [
         {
           "name": "bubbles",
@@ -827,6 +968,24 @@
           "z": 2.5
         }
       ],
+      "hotspots": [
+        {
+          "id": "tasks",
+          "position": [
+            63,
+            30
+          ],
+          "z": 0.6
+        },
+        {
+          "id": "calendar",
+          "position": [
+            118,
+            33
+          ],
+          "z": 0.6
+        }
+      ],
       "ambient": [
         {
           "name": "fizz",
@@ -905,6 +1064,24 @@
             24
           ],
           "z": 2.5
+        }
+      ],
+      "hotspots": [
+        {
+          "id": "tasks",
+          "position": [
+            63,
+            30
+          ],
+          "z": 0.6
+        },
+        {
+          "id": "calendar",
+          "position": [
+            118,
+            33
+          ],
+          "z": 0.6
         }
       ],
       "ambient": [
@@ -997,6 +1174,24 @@
             24
           ],
           "z": 2.5
+        }
+      ],
+      "hotspots": [
+        {
+          "id": "tasks",
+          "position": [
+            63,
+            30
+          ],
+          "z": 0.6
+        },
+        {
+          "id": "calendar",
+          "position": [
+            112,
+            33
+          ],
+          "z": 0.6
         }
       ],
       "ambient": [
@@ -1097,6 +1292,24 @@
             24
           ],
           "z": 2.5
+        }
+      ],
+      "hotspots": [
+        {
+          "id": "tasks",
+          "position": [
+            63,
+            30
+          ],
+          "z": 0.6
+        },
+        {
+          "id": "calendar",
+          "position": [
+            118,
+            33
+          ],
+          "z": 0.6
         }
       ],
       "ambient": [

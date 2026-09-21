@@ -83,6 +83,40 @@ struct Theme: Decodable {
         let z: CGFloat
     }
 
+    /// A prop that is a button (docs/ART.md, "Hotspots"). The sheet has one column per `levels`
+    /// and two rows: idle on top, hover below.
+    struct Hotspot: Decodable {
+        /// Small sprites inside the frame, placed from the frame's bottom-left.
+        struct Digits: Decodable {
+            let sheet: String
+            let frame: [Int]
+            let position: [CGFloat]
+        }
+
+        /// What the click means; the engine knows `tasks` and `calendar`.
+        let id: String
+        /// The tooltip.
+        let name: String
+        let sheet: String
+        let frame: [Int]
+        let levels: Int
+        /// The clickable part of the frame, [x, y, w, h] from its bottom-left; nil: all of it.
+        let hit: [CGFloat]?
+        let position: [CGFloat]
+        let z: CGFloat
+        /// Overlay shown while the hotspot has news.
+        let news: Piece?
+        /// Ten digits side by side, for a hotspot that shows a number (today's date).
+        let digits: Digits?
+    }
+
+    /// Where one scene hangs a theme hotspot. Hotspots a scene does not list are absent from it.
+    struct Spot: Decodable {
+        let id: String
+        let position: [CGFloat]
+        let z: CGFloat?
+    }
+
     /// Where one scene puts a theme prop. Props a scene does not list are absent from it.
     struct Placement: Decodable {
         let name: String
@@ -116,6 +150,8 @@ struct Theme: Decodable {
         let feet: [CGFloat]?
         /// nil: every theme prop at its default place.
         let props: [Placement]?
+        /// nil: every theme hotspot at its default place.
+        let hotspots: [Spot]?
         let ambient: [Ambient]?
         /// Replaces a default animation in this scene, for example "type": "hammer".
         let animations: [String: String]?
@@ -131,5 +167,6 @@ struct Theme: Decodable {
     let frame: Frame?
     let orb: Orb?
     let props: [Prop]?
+    let hotspots: [Hotspot]?
     let scenes: [Scene]
 }

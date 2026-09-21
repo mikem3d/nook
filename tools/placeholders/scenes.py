@@ -3,7 +3,8 @@ in front of the dwarf) and returns the scene's ambient animations and manifest e
 
 Zones every scene respects (docs/ART.md): the ladder column x 12..25, the tunnel mouths x < 10 and
 x >= 182 on rows 62..91, the vitals wall x 32..62, the dwarf at x 84..115, the scene's own feature
-at x 136..180. The upper right stays calm: the speech bubble covers it.
+at x 136..180. The hotspots hang either side of the dwarf, below the bubble: the task board at x 63..84 and
+the calendar at x 118..134, rows 56..77; a scene moves one through its "hotspots" extra. The upper right stays calm: the speech bubble covers it.
 """
 from .layout import W, H, BAR, FLOOR, BENCH_TOP, BENCH_X, BENCH_W, bl
 from .pixels import Img, noise, sheet
@@ -128,7 +129,8 @@ def workshop():
         cart.append(f)
     path = {"to": bl(174, 69, 9), "seconds": 6, "every": 18}
     fg.blit(top, 0, D)
-    return bg, fg, [anim("cart", cart, 4, 126, 69, z=0.4, path=path)], {}
+    # The calendar hangs on the wall piece that hides the cart, so it has to be drawn in front of it.
+    return bg, fg, [anim("cart", cart, 4, 126, 69, z=0.4, path=path)], {"hotspots": {"calendar": {"z": 2.2}}}
 
 
 def forge():
@@ -258,7 +260,8 @@ def mushrooms():
     path = {"to": bl(131, FLOOR - 3, 3), "seconds": 1.2, "every": 5}
     drip = anim("drip", [drop], 1, 131, BAR, path=path)
     fg.blit(top, 0, D)
-    return bg, fg, [spores, drip], {}
+    # Left of the falling drip, so the drop never passes behind the calendar.
+    return bg, fg, [spores, drip], {"hotspots": {"calendar": {"position": bl(112, 57, 18)}}}
 
 
 def quarters():

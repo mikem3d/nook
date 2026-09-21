@@ -49,6 +49,15 @@ final class AgentSession {
     /// When the current turn began; nil while the agent is not working.
     private(set) var turnStarted: Date?
 
+    // --- Read by the hotspots (task board, calendar). ---
+    /// The agent's own plan: the latest list it kept with its task tools (see `AgentPlan`).
+    var todos: [AgentTodo] { plan.todos }
+    private var plan = AgentPlan()
+    /// Counts every turn that reached a result, so a listener can tell one finished; `lastTurnFailed`
+    /// says how (an error, an interrupt, or the process dying mid-turn).
+    private(set) var turnsCompleted = 0
+    private(set) var lastTurnFailed = false
+
     /// Called on the main thread whenever anything visible changed.
     var onChange: (() -> Void)?
 
@@ -181,7 +190,10 @@ final class AgentSession {
         inFlight = nil
         turnStarted = nil
         clearStream()
-        if wasBusy { summary = "Session ended unexpectedly" }
+        if wasBusy {
+            summary = "Session ended unexpectedly"
+            lastTurnFailed = true
+        }
         let remark = "Session ended (exit \(proc.terminationStatus))." + (wasBusy ? " Send a message to pick it back up." : "")
         transcript.append(.init(kind: .system, text: remark))
         set(.sleeping, bubble: wasBusy ? summary : "")
@@ -316,7 +328,9 @@ final class AgentSession {
                     set(.talking, bubble: text)
                 case "tool_use":
                     let name = block["name"] as? String ?? "tool"
-                    let brief = Self.brief(block["input"] as? [String: Any] ?? [:])
+                    let input = block["input"] as? [String: Any] ?? [:]
+                    if !nested { _ = plan.toolUse(id: block["id"] as? String, name: name, input: input) }
+                    let brief = Self.brief(input)
                     transcript.append(.init(kind: .tool, text: brief.isEmpty ? name : "\(name): \(brief)"))
                     if pending == nil { set(.working, bubble: name) }
                 default:
@@ -325,6 +339,10 @@ final class AgentSession {
             }
         case "user":
             // Tool results coming back: the agent is reading them.
+            if !nested, let result = event["tool_use_result"] as? [String: Any],
+               let blocks = (event["message"] as? [String: Any])?["content"] as? [[String: Any]],
+               let id = blocks.first(where: { $0["type"] as? String == "tool_result" })?["tool_use_id"] as? String,
+               plan.toolResult(id: id, result: result), state != .working { onChange?() }
             if state == .working { set(.thinking) }
         case "control_request":
             control(event)
@@ -379,6 +397,8 @@ final class AgentSession {
         } else {
             summary = turnSummary ?? Self.firstSentence(lastAssistantText)
         }
+        lastTurnFailed = interrupted || failed
+        turnsCompleted += 1
         interrupted = false
         pending = nil
         inFlight = nil
@@ -531,6 +551,10 @@ final class AgentSession {
         }
         return ""
     }
+
+    /// A system line in the transcript from outside the engine: automatic sends name their source
+    /// here, so the log always says what was not typed by the user.
+    func remark(_ text: String) { note(text) }
 
     private func note(_ text: String) {
         transcript.append(.init(kind: .system, text: text))

@@ -6,7 +6,8 @@ positions are the contract. See docs/ART.md.
   python3 tools/make_placeholders.py
 
 The painters live in tools/placeholders/: pixels (canvas and the 32-colour palette), layout (the
-shared geometry), dwarf (character and portrait), frame (rock, connectors, orb), props, scenes.
+shared geometry), dwarf (character and portrait), frame (rock, connectors, orb), props, hotspots
+(the props that are buttons), scenes.
 """
 import json
 import os
@@ -14,7 +15,7 @@ import shutil
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from placeholders import dwarf, frame, props, scenes  # noqa: E402
+from placeholders import dwarf, frame, hotspots, props, scenes  # noqa: E402
 from placeholders.layout import W, H, BAR, FLOOR, FEET, LADDER_X, LADDER_W, LADDER_BOTTOM_TOP, TUNNEL_TOP, TUNNEL_H, TUNNEL_W, ORB, bl  # noqa: E402
 from placeholders.pixels import HEX  # noqa: E402
 
@@ -70,12 +71,25 @@ def main():
     for name, size, states, position, z, _ in props.PROPS:
         prop_defs.append({"name": name, "sheet": f"props/{name}.png", "frame": list(size), "states": states, "position": position, "z": z})
 
+    hotspot_defs = []
+    for ident, name, size, levels, paint, hit, position, z, news, number in hotspots.HOTSPOTS:
+        entry = {"id": ident, "name": name, "sheet": save(hotspots.grid(size, levels, paint), f"hotspots/{ident}.png"),
+                 "frame": list(size), "levels": levels, "hit": hit, "position": position, "z": z}
+        if news:
+            mark, mark_size, place = news
+            entry["news"] = {"sprite": save(hotspots.overlay(mark_size, mark), f"hotspots/{ident}_news.png"), "position": place}
+        if number:
+            entry["digits"] = {"sheet": save(hotspots.digits(), "hotspots/digits.png"), "frame": [3, 5], "position": number}
+        hotspot_defs.append(entry)
+
     scene_defs = []
     for ident, name, paint in scenes.SCENES:
         bg, fg, ambient, extra = paint()
         entry = {"id": ident, "name": name, "bg": save(bg, f"scenes/{ident}/bg.png"), "fg": save(fg, f"scenes/{ident}/fg.png"), "feet": list(FEET)}
         placements = extra.get("props", {})
         entry["props"] = [{"name": p["name"], "position": placements.get(p["name"], {}).get("position", p["position"]), "z": p["z"]} for p in prop_defs]
+        moved = extra.get("hotspots", {})
+        entry["hotspots"] = [dict({"id": h["id"], "position": h["position"], "z": h["z"]}, **moved.get(h["id"], {})) for h in hotspot_defs]
         entry["ambient"] = []
         for spec, sheet in ambient:
             spec = dict(spec, sheet=save(sheet, f"scenes/{ident}/{spec['name']}.png"))
@@ -90,7 +104,7 @@ def main():
         "geometry": {"header": BAR, "floor": H - FLOOR, "ladder": [LADDER_X, LADDER_W], "tunnel": [H - TUNNEL_TOP - TUNNEL_H, TUNNEL_H]},
         "character": character, "avatars": dwarf.avatar_swaps(), "portrait": portrait,
         "frame": {"overlay": save(frame.overlay(), "frame/frame.png"), "connectors": connectors},
-        "orb": orb, "props": prop_defs, "scenes": scene_defs,
+        "orb": orb, "props": prop_defs, "hotspots": hotspot_defs, "scenes": scene_defs,
     }
     with open(os.path.join(ROOT, "theme.json"), "w") as f:
         json.dump(theme, f, indent=2)

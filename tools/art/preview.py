@@ -119,6 +119,11 @@ class Chamber:
             prop = props.get(place["name"])
             if prop and place["name"] != "hourglass":   # the engine hides the hourglass until a turn runs long
                 layers.append((place.get("z", prop["z"]), self.cell(prop["sheet"], prop["frame"], min(prop["states"] // 2, prop["states"] - 1)), place["position"]))
+        spots = {h["id"]: h for h in self.man.get("hotspots") or []}
+        for place in scene.get("hotspots") or []:
+            spot = spots.get(place["id"])
+            if spot:   # idle, at its fullest level
+                layers.append((place.get("z", spot["z"]), self.cell(spot["sheet"], spot["frame"], spot["levels"] - 1), place["position"]))
         for amb in scene.get("ambient") or []:
             pos = amb["position"]
             if amb.get("path"):
