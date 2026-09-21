@@ -4,9 +4,11 @@ import AppKit
 /// opens the panels, keeps the props in the scene telling the truth, and is the only place that
 /// sends anything to an agent without the user pressing a key.
 ///
-/// Both automatic paths (the queue's auto mode, scheduled prompts) are off until the user switches
-/// them on, light a marker in the window while they are armed, and write a system line naming
-/// their source into the transcript before they send, which quiet mode does not hide.
+/// Every automatic path (an agent's auto queue, a task marked to run when unblocked, scheduled
+/// prompts) is off until the user switches it on, lights a marker in the window while it is armed,
+/// and writes a system line naming its source into the transcript before it sends, which quiet
+/// mode does not hide. What may be sent is decided by `TaskScheduler`; the tasks themselves live in
+/// `TaskHub.shared.store`, and the notice board is a view of that list filtered to one agent.
 /// Nothing here polls: session notifications, one timer set to the next due time, and the system's
 /// day-change, wake and clock-change notifications.
 final class Hotspots: NSObject, Feature {
@@ -17,12 +19,12 @@ final class Hotspots: NSObject, Feature {
 
     /// What Nook sent that the agent has not finished yet.
     private enum Outstanding {
-        case task
+        case task(UUID)
         case scheduled(UUID)
     }
 
     private weak var app: AppController?
-    private let tasks: HotspotStore<TaskQueue>
+    private var store: TaskStore { TaskHub.shared.store }
     private let calendars: HotspotStore<AgentCalendar>
     private let panel = HotspotPanel()
     private var timer: Timer?
@@ -31,10 +33,14 @@ final class Hotspots: NSObject, Feature {
     private var auto = Set<String>()
     private var sentThisRun: [String: Int] = [:]
     private var outstanding: [String: Outstanding] = [:]
+    /// Ready tasks the scheduler held back, so the transcript says why once rather than at every change.
+    private var held = Set<UUID>()
     /// Scheduled prompts that came due mid-turn, waiting for the agent to be free.
     private var waiting: [String: [UUID]] = [:]
     /// By session, not by folder: a reopened agent starts counting again.
     private var turnsSeen: [UUID: Int] = [:]
+    /// Session changes arrive many times a second while an agent streams; views only hear of a real change.
+    private var wasFree: [UUID: Bool] = [:]
     private var plans: [UUID: [AgentTodo]] = [:]
     private var planNews = Set<String>()
 
@@ -44,7 +50,6 @@ final class Hotspots: NSObject, Feature {
     private var closed: (hotspot: String, window: ObjectIdentifier, at: TimeInterval)?
 
     init(folder: URL? = nil) {
-        tasks = HotspotStore(name: "tasks.json", folder: folder) { TaskQueue() }
         calendars = HotspotStore(name: "schedule.json", folder: folder) { AgentCalendar() }
         super.init()
     }
@@ -52,10 +57,12 @@ final class Hotspots: NSObject, Feature {
     func install(in app: AppController) {
         self.app = app
         // A task that was out when Nook last quit never reported back.
-        for key in tasks.keys where tasks[key].sending != nil {
-            tasks.update(key) { $0.finish(summary: "Nook closed before it finished", failed: true, at: Date()) }
+        store.edit { tasks in
+            for task in tasks where task.status.isOut { tasks.finish(task.id, summary: "Nook closed before it finished", failed: true, at: Date()) }
         }
+        TaskHub.shared.driver = self
         let centre = NotificationCenter.default
+        centre.addObserver(self, selector: #selector(tasksChanged), name: TaskStore.changed, object: nil)
         centre.addObserver(self, selector: #selector(clicked(_:)), name: .nookHotspot, object: nil)
         centre.addObserver(self, selector: #selector(sessionChanged(_:)), name: .nookSessionChanged, object: nil)
         centre.addObserver(self, selector: #selector(agentsChanged), name: .nookAgentsChanged, object: nil)
@@ -87,8 +94,8 @@ final class Hotspots: NSObject, Feature {
         case ID.tasks:
             let model = TaskBoardModel(feature: self, window: window)
             boardModel = model
-            tasks.update(key) { $0.unseen = false }
             planNews.remove(key)
+            store.markSeen(key, at: Date())
             panel.present(TaskBoardView(model: model), size: CGSize(width: TextSize.metric(400), height: TextSize.metric(560)), hotspot: id, beside: window)
         case ID.calendar:
             let model = CalendarModel(feature: self, window: window)
@@ -112,17 +119,19 @@ final class Hotspots: NSObject, Feature {
         // A panel does not outlive its window, or hang off an orb.
         if let anchor = panel.anchor, anchor.minimised || !app.windows.contains(anchor) { panel.dismiss() }
         app.windows.forEach(refresh)
+        TaskHub.shared.agentsChanged()
     }
 
     // MARK: the scene tells the truth
 
     private func refresh(_ window: AgentWindow) {
         let key = Self.key(for: window.session)
-        let queue = tasks[key]
         let calendar = calendars[key]
         let plan = window.session.todos.filter { $0.status != .completed }.count
-        window.room.showHotspot(ID.tasks, HotspotState(level: queue.open + plan, news: queue.unseen || planNews.contains(key)))
         let today = Date()
+        let open = store.tasks.filter { $0.agent == key && !$0.status.isFinished }.count
+        let news = planNews.contains(key) || store.tasks.hasNews(for: key, since: store.seen(key), now: today)
+        window.room.showHotspot(ID.tasks, HotspotState(level: open + plan, news: news))
         let marked = calendar.hasRun(on: today) || calendar.items.contains { $0.missed != nil }
         window.room.showHotspot(ID.calendar, HotspotState(news: marked, number: Calendar.current.component(.day, from: today)))
         window.automation = auto.contains(key) || calendar.items.contains(where: \.enabled)
@@ -139,19 +148,30 @@ final class Hotspots: NSObject, Feature {
             plans[session.id] = session.todos
             if !(panel.anchor === window && panel.hotspot == ID.tasks) { planNews.insert(key) }
             boardModel?.reload()
+            TaskHub.shared.agentsChanged()
             refresh(window)
+        }
+        if case .task(let id) = outstanding[key], session.turnStarted != nil, store.tasks.task(id)?.status == .sent {
+            store.edit { tasks in
+                if let index = tasks.firstIndex(where: { $0.id == id }) { tasks[index].status = .running }
+            }
         }
         if session.turnsCompleted != turnsSeen[session.id] ?? 0 {
             turnsSeen[session.id] = session.turnsCompleted
             turnFinished(window, key: key)
         }
-        if boardModel?.window === window { boardModel?.reloadStatus() }
-        guard Self.isFree(session) else { return }
+        let free = Self.isFree(session)
+        if free != wasFree[session.id] ?? true {
+            wasFree[session.id] = free
+            boardModel?.reload()
+            TaskHub.shared.agentsChanged()
+        }
+        guard free else { return }
         if let next = waiting[key]?.first {
             waiting[key]?.removeFirst()
             run(next, on: window)
         } else {
-            pump(window)
+            pump()
         }
     }
 
@@ -160,10 +180,9 @@ final class Hotspots: NSObject, Feature {
         let (summary, failed, now) = (session.summary, session.lastTurnFailed, Date())
         var source = ""
         switch outstanding.removeValue(forKey: key) {
-        case .task:
+        case .task(let id):
             source = "Queued task"
-            tasks.update(key) { $0.finish(summary: summary, failed: failed, at: now) }
-            if panel.anchor === window, panel.hotspot == ID.tasks { tasks.update(key) { $0.unseen = false } }
+            store.edit { $0.finish(id, summary: summary, failed: failed, at: now) }
         case .scheduled(let id):
             source = "Scheduled"
             calendars.update(key) { calendar in
@@ -176,78 +195,104 @@ final class Hotspots: NSObject, Feature {
             break
         }
         calendars.update(key) { $0.record(.init(date: now, summary: summary, failed: failed, source: source)) }
-        reloadModels()
-        refresh(window)
-    }
-
-    private func reloadModels() {
-        boardModel?.reload()
         calendarModel?.reload()
-    }
-
-    // MARK: the task queue
-
-    func queue(for window: AgentWindow) -> TaskQueue { tasks[Self.key(for: window.session)] }
-    func isAuto(_ window: AgentWindow) -> Bool { auto.contains(Self.key(for: window.session)) }
-
-    func editQueue(_ window: AgentWindow, _ change: (inout TaskQueue) -> Void) {
-        tasks.update(Self.key(for: window.session), change)
-        reloadModels()
         refresh(window)
-        pump(window)
     }
 
-    /// The user's own click: sends the top task now, and starts a fresh auto run count.
-    func sendNext(_ window: AgentWindow) {
-        let key = Self.key(for: window.session)
-        guard Self.isFree(window.session), outstanding[key] == nil else { return }
-        sentThisRun[key] = 0
-        send(window, key: key, automatic: false)
+    /// The list changed, from the hub, a notice board or a finished turn.
+    @objc private func tasksChanged() {
+        if let anchor = panel.anchor, panel.hotspot == ID.tasks {
+            // The open board is being looked at: what arrives is seen. Marking clears the news, so this does not loop.
+            let key = Self.key(for: anchor.session)
+            if store.tasks.hasNews(for: key, since: store.seen(key), now: Date()) { store.markSeen(key, at: Date()) }
+        }
+        boardModel?.reload()
+        app?.windows.forEach(refresh)
     }
 
-    func setAuto(_ on: Bool, for window: AgentWindow) {
-        let key = Self.key(for: window.session)
-        guard on != auto.contains(key) else { return }
-        if on { auto.insert(key) } else { auto.remove(key) }
-        sentThisRun[key] = 0
-        window.session.remark(on ? "Auto queue on: queued tasks are sent as each turn finishes, at most \(AutoRun.limit) in a row."
-                                 : "Auto queue off.")
-        reloadModels()
-        refresh(window)
-        pump(window)
-    }
+    // MARK: sending tasks
 
-    /// Auto mode's one decision point. Called whenever the agent might have become free.
-    private func pump(_ window: AgentWindow) {
-        let session = window.session
-        let key = Self.key(for: session)
-        let decision = AutoRun.decide(auto: auto.contains(key), queued: tasks[key].queued.count, free: Self.isFree(session),
-                                      waitingForPermission: session.pending != nil, outstanding: outstanding[key] != nil,
-                                      lastTurnFailed: session.lastTurnFailed, sentThisRun: sentThisRun[key] ?? 0, limit: AutoRun.limit)
-        switch decision {
-        case .wait:
-            break
-        case .send:
-            send(window, key: key, automatic: true)
-        case .stop(let why):
-            auto.remove(key)
-            session.remark("Auto queue stopped: \(why). \(tasks[key].queued.count) queued tasks are waiting.")
-            reloadModels()
-            refresh(window)
+    func isAuto(_ key: String) -> Bool { auto.contains(key) }
+
+    /// How the scheduler sees each open agent. Two windows on one folder count once, as the first.
+    func agentStates() -> [TaskScheduler.Agent] {
+        (app?.windows ?? []).map { window in
+            let session = window.session
+            let key = Self.key(for: session)
+            let state: TaskScheduler.AgentState = session.pending != nil ? .pendingPermission
+                : !Self.isFree(session) || outstanding[key] != nil ? .busy
+                : session.lastTurnFailed ? .lastTurnFailed : .idle
+            return TaskScheduler.Agent(key: key, state: state, auto: auto.contains(key), sentThisRun: sentThisRun[key] ?? 0)
         }
     }
 
-    private func send(_ window: AgentWindow, key: String, automatic: Bool) {
-        var item: TaskQueue.Item?
-        tasks.update(key) { item = $0.takeNext(automatic: automatic) }
-        guard let item else { return }
-        // Marked before anything is logged: the log line itself comes back here as a session change.
-        outstanding[key] = .task
-        if automatic { sentThisRun[key, default: 0] += 1 }
-        window.session.remark((automatic ? "Queued task (sent automatically): " : "Queued task: ") + item.text)
-        window.session.send(item.text)
-        reloadModels()
+    /// The user's own click or key: sends this task now, and starts a fresh automatic run count.
+    /// Returns why not, if it cannot go.
+    @discardableResult
+    func sendNow(_ id: UUID) -> String? {
+        guard let task = store.tasks.task(id) else { return "That task is gone" }
+        let agent = agentStates().first { $0.key == task.agent }
+        if let refusal = TaskScheduler.refusal(task, in: store.tasks, agent: agent) { return refusal }
+        guard let key = task.agent, let window = window(for: key) else { return "Its agent is not open" }
+        sentThisRun[key] = 0
+        send(task, to: window, key: key, source: nil)
+        return nil
+    }
+
+    func setAuto(_ on: Bool, for key: String) {
+        guard on != auto.contains(key), let window = window(for: key) else { return }
+        if on { auto.insert(key) } else { auto.remove(key) }
+        sentThisRun[key] = 0
+        window.session.remark(on ? "Auto queue on: queued tasks are sent as each turn finishes, at most \(TaskScheduler.limit) in a row."
+                                 : "Auto queue off.")
+        autoChanged(window)
+        pump()
+    }
+
+    private func autoChanged(_ window: AgentWindow) {
+        boardModel?.reload()
+        TaskHub.shared.agentsChanged()
         refresh(window)
+    }
+
+    /// The one decision point for automatic sends. Called whenever an agent might have become free
+    /// or the list changed; it looks at every agent, because a task may wait on another agent's.
+    func pump() {
+        let tasks = store.tasks
+        guard tasks.contains(where: { $0.status == .queued && $0.agent != nil }) else { return }
+        let plan = TaskScheduler.plan(tasks: tasks, agents: agentStates(), limit: TaskScheduler.limit)
+        for hold in plan.holds {
+            guard let window = window(for: hold.agent) else { continue }
+            switch hold.source {
+            case .autoQueue:
+                auto.remove(hold.agent)
+                let count = tasks.filter { $0.agent == hold.agent && $0.status == .queued }.count
+                window.session.remark("Auto queue stopped: \(hold.why). \(count) queued tasks are waiting.")
+                autoChanged(window)
+            case .chain:
+                guard held.insert(hold.task).inserted, let task = tasks.task(hold.task) else { continue }
+                window.session.remark("Chained task held (“\(task.title)”): \(hold.why). Send it yourself from the task board when ready.")
+            }
+        }
+        for item in plan.sends {
+            guard let task = tasks.task(item.task), let window = window(for: item.agent) else { continue }
+            send(task, to: window, key: item.agent, source: item.source)
+        }
+    }
+
+    private func send(_ task: NookTask, to window: AgentWindow, key: String, source: TaskScheduler.Source?) {
+        // Marked before anything is logged: the log line itself comes back here as a session change.
+        outstanding[key] = .task(task.id)
+        held.remove(task.id)
+        if source != nil { sentThisRun[key, default: 0] += 1 }
+        let tasks = store.tasks
+        let labels = TaskHub.shared.label(forAgent:)
+        store.edit { list in
+            guard let index = list.firstIndex(where: { $0.id == task.id }) else { return }
+            (list[index].status, list[index].sent, list[index].automatic) = (.sent, Date(), source != nil)
+        }
+        window.session.remark(TaskPrompt.note(task, in: tasks, source: source, labels: labels))
+        window.session.send(TaskPrompt.compose(task, in: tasks))
     }
 
     // MARK: the calendar

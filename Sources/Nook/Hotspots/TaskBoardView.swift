@@ -1,17 +1,21 @@
 import SwiftUI
 
-/// What the task board panel shows. The feature pushes changes in; the view sends edits back through it.
+/// What one agent's notice board shows: the shared list filtered to that agent. The driver pushes
+/// changes in; edits go back through `TaskHub`, the same way the hub's do.
 final class TaskBoardModel: ObservableObject {
     private weak var feature: Hotspots?
     private(set) weak var window: AgentWindow?
     let label: String
+    let agent: String
 
-    @Published private(set) var queue = TaskQueue()
+    @Published private(set) var tasks: [NookTask] = []
     @Published private(set) var todos: [AgentTodo] = []
     @Published private(set) var auto = false
     @Published private(set) var free = true
-    @Published var limit = AutoRun.limit {
-        didSet { if limit != oldValue { UserDefaults.standard.set(limit, forKey: AutoRun.limitKey) } }
+    @Published private(set) var now = Date()
+    @Published var message = ""
+    @Published var limit = TaskScheduler.limit {
+        didSet { if limit != oldValue { UserDefaults.standard.set(limit, forKey: TaskScheduler.limitKey) } }
     }
     private var sizeObserver: NSObjectProtocol?
 
@@ -19,6 +23,7 @@ final class TaskBoardModel: ObservableObject {
         self.feature = feature
         self.window = window
         label = window.session.label
+        agent = Hotspots.key(for: window.session)
         sizeObserver = NotificationCenter.default.addObserver(forName: TextSize.changed, object: nil, queue: .main) { [weak self] _ in
             self?.objectWillChange.send()
         }
@@ -27,24 +32,39 @@ final class TaskBoardModel: ObservableObject {
 
     deinit { sizeObserver.map(NotificationCenter.default.removeObserver) }
 
+    /// The driver calls this on real changes only, never per streamed token.
     func reload() {
         guard let feature, let window else { return }
-        queue = feature.queue(for: window)
+        tasks = TaskHub.shared.tasks
         todos = window.session.todos
-        auto = feature.isAuto(window)
-        reloadStatus()
+        auto = feature.isAuto(agent)
+        free = Hotspots.isFree(window.session)
+        now = Date()
     }
 
-    /// Session changes arrive many times a second while an agent streams; only a real change redraws.
-    func reloadStatus() {
-        guard let window else { return }
-        let now = Hotspots.isFree(window.session)
-        if now != free { free = now }
+    private var mine: [NookTask] { tasks.filter { $0.agent == agent } }
+    var out: NookTask? { tasks.out(for: agent) }
+    /// Everything waiting, sendable or not, in the order it would go.
+    var queued: [NookTask] { mine.filter { $0.status == .queued }.inBoardOrder() }
+    var next: NookTask? { tasks.ready(for: agent).first }
+    /// Newest first.
+    var finished: [NookTask] { mine.filter(\.status.isFinished).sorted { ($0.finished ?? .distantPast) > ($1.finished ?? .distantPast) } }
+
+    func blockText(_ task: NookTask) -> String? {
+        tasks.blocker(of: task).map { tasks.blockText($0, labels: TaskHub.shared.label(forAgent:)) }
     }
 
-    func edit(_ change: (inout TaskQueue) -> Void) { window.map { feature?.editQueue($0, change) } }
-    func sendNext() { window.map { feature?.sendNext($0) } }
-    func setAuto(_ on: Bool) { window.map { feature?.setAuto(on, for: $0) } }
+    func add(_ line: String) { TaskHub.shared.add(line, defaultAgent: agent) }
+    func edit(_ change: (inout [NookTask]) -> Void) { TaskHub.shared.edit(change) }
+    func sendNext() { message = next.flatMap { TaskHub.shared.sendNow($0.id) } ?? "" }
+    func setAuto(_ on: Bool) { feature?.setAuto(on, for: agent) }
+
+    /// A drag within the list. Priority and due date still come first, so a move only sticks among equals.
+    func move(from: IndexSet, to: Int) {
+        var order = queued.map(\.id)
+        order.move(fromOffsets: from, toOffset: to)
+        edit { $0.reorder(order) }
+    }
 }
 
 struct TaskBoardView: View {
@@ -60,7 +80,7 @@ struct TaskBoardView: View {
             queue
             Divider()
             controls
-            if !model.queue.done.isEmpty {
+            if !model.finished.isEmpty {
                 Divider()
                 done
             }
@@ -78,37 +98,8 @@ struct TaskBoardView: View {
             if model.todos.isEmpty {
                 Text("No plan reported yet.").font(HotspotText.caption).foregroundStyle(.secondary)
             }
-            ScrollView {
-                VStack(alignment: .leading, spacing: 5) {
-                    ForEach(Array(model.todos.enumerated()), id: \.offset) { _, todo in
-                        HStack(alignment: .firstTextBaseline, spacing: 7) {
-                            Image(systemName: Self.icon(todo.status)).foregroundStyle(Self.tint(todo.status)).frame(width: 18)
-                            Text(todo.status == .inProgress ? todo.activeForm : todo.content)
-                                .font(HotspotText.body)
-                                .strikethrough(todo.status == .completed)
-                                .foregroundStyle(todo.status == .completed ? .secondary : .primary)
-                        }
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .frame(maxHeight: model.todos.isEmpty ? 0 : 120)
-        }
-    }
-
-    private static func icon(_ status: AgentTodo.Status) -> String {
-        switch status {
-        case .pending: return "circle"
-        case .inProgress: return "arrow.right.circle.fill"
-        case .completed: return "checkmark.circle.fill"
-        }
-    }
-
-    private static func tint(_ status: AgentTodo.Status) -> Color {
-        switch status {
-        case .pending: return .secondary
-        case .inProgress: return .yellow
-        case .completed: return .green
+            ScrollView { AgentPlanList(todos: model.todos) }
+                .frame(maxHeight: model.todos.isEmpty ? 0 : 120)
         }
     }
 
@@ -117,37 +108,30 @@ struct TaskBoardView: View {
     private var queue: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("YOUR QUEUE").font(HotspotText.heading).foregroundStyle(.secondary)
-            TextField("Add a task for this agent", text: $draft)
+            TextField("Add a task:  fix the login bug !high due fri #auth", text: $draft)
                 .textFieldStyle(.roundedBorder)
                 .font(HotspotText.body)
                 .focused($adding)
                 .onSubmit {
-                    model.edit { $0.add(draft) }
+                    model.add(draft)
                     draft = ""
                     adding = true
                 }
-            if let sending = model.queue.sending {
-                Label(sending.text, systemImage: "paperplane.fill").font(HotspotText.body).foregroundStyle(.yellow).lineLimit(2)
-            }
+            if let out = model.out { TaskRow(task: out, now: model.now) }
             // A List, for its drag to reorder.
             List {
-                ForEach(model.queue.queued) { item in
+                ForEach(model.queued) { task in
                     HStack(spacing: 6) {
                         Image(systemName: "line.3.horizontal").foregroundStyle(.tertiary)
-                        TextField("Task", text: Binding(get: { item.text }, set: { text in
-                            model.edit { queue in
-                                if let index = queue.queued.firstIndex(where: { $0.id == item.id }) { queue.queued[index].text = text }
-                            }
-                        }))
-                        .textFieldStyle(.plain)
-                        .font(HotspotText.body)
-                        Button { model.edit { $0.queued.removeAll { $0.id == item.id } } } label: { Image(systemName: "xmark.circle.fill") }
+                        TaskRow(task: task, block: model.blockText(task), now: model.now)
+                        Button { model.edit { $0.cancelOrRemove(task.id, at: Date()) } } label: { Image(systemName: "xmark.circle.fill") }
                             .buttonStyle(.plain)
                             .foregroundStyle(.secondary)
-                            .help("Delete")
+                            .help("Cancel")
                     }
+                    .listRowInsets(EdgeInsets(top: 2, leading: 0, bottom: 2, trailing: 0))
                 }
-                .onMove { from, to in model.edit { $0.queued.move(fromOffsets: from, toOffset: to) } }
+                .onMove(perform: model.move)
             }
             .listStyle(.plain)
             .scrollContentBackground(.hidden)
@@ -159,16 +143,17 @@ struct TaskBoardView: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Button("Send Next") { model.sendNext() }
-                    .disabled(model.queue.queued.isEmpty || !model.free || model.queue.sending != nil)
+                    .disabled(model.next == nil || !model.free || model.out != nil)
                 Spacer()
                 Toggle("Auto", isOn: Binding(get: { model.auto }, set: model.setAuto))
                     .toggleStyle(.switch)
                 Stepper("up to \(model.limit)", value: $model.limit, in: 1...20).fixedSize()
             }
             .font(HotspotText.body)
+            if !model.message.isEmpty { Text(model.message).font(HotspotText.caption).foregroundStyle(.orange) }
             Text(model.auto
                  ? "Auto is on: the next task is sent each time a turn ends well, up to \(model.limit) in a row. Permission questions still wait for you."
-                 : "Auto sends the next task each time a turn ends well, with nobody watching. It is off.")
+                 : "Auto sends the next task each time a turn ends well, with nobody watching. It is off. Priorities, chains and every agent: Task Board in the menu bar.")
                 .font(HotspotText.caption)
                 .foregroundStyle(model.auto ? .yellow : .secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -179,21 +164,9 @@ struct TaskBoardView: View {
         VStack(alignment: .leading, spacing: 5) {
             Text("DONE").font(HotspotText.heading).foregroundStyle(.secondary)
             ScrollView {
-                VStack(alignment: .leading, spacing: 7) {
-                    ForEach(model.queue.done) { item in
-                        VStack(alignment: .leading, spacing: 1) {
-                            HStack(spacing: 5) {
-                                Image(systemName: item.failed ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
-                                    .foregroundStyle(item.failed ? .red : .green)
-                                Text(item.text).font(HotspotText.body).lineLimit(1)
-                            }
-                            Text((item.automatic ? "Auto · " : "") + item.finished.formatted(date: .abbreviated, time: .shortened)
-                                 + (item.summary.isEmpty ? "" : " · " + item.summary))
-                                .font(HotspotText.caption).foregroundStyle(.secondary).lineLimit(2)
-                        }
-                    }
+                VStack(alignment: .leading, spacing: 5) {
+                    ForEach(model.finished) { TaskRow(task: $0, now: model.now) }
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
             }
             .frame(maxHeight: 110)
         }
