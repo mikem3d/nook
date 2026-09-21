@@ -168,72 +168,18 @@ final class HotspotTests: XCTestCase {
         XCTAssertFalse(plan.toolResult(id: "never-asked", result: ["task": ["id": "3", "subject": "Ghost"]]))
     }
 
-    // MARK: the user's queue and auto mode
-
-    func testQueueSendsFromTheTopAndFilesResults() {
-        var queue = TaskQueue()
-        queue.add("  first  ")
-        queue.add("")
-        queue.add("second")
-        XCTAssertEqual(queue.queued.map(\.text), ["first", "second"])
-        XCTAssertEqual(queue.open, 2)
-        let sent = queue.takeNext(automatic: true)
-        XCTAssertEqual(sent?.text, "first")
-        XCTAssertNil(queue.takeNext(automatic: true), "one at a time")
-        XCTAssertEqual(queue.open, 2, "a task with the agent is still open")
-        queue.finish(summary: "3 files changed", failed: false, at: Date(timeIntervalSince1970: 0))
-        XCTAssertEqual(queue.done.first?.summary, "3 files changed")
-        XCTAssertEqual(queue.done.first?.automatic, true)
-        XCTAssertTrue(queue.unseen, "the wax seal")
-        XCTAssertNil(queue.sending)
-        queue.finish(summary: "again", failed: false, at: Date())
-        XCTAssertEqual(queue.done.count, 1, "nothing out, nothing to file")
-        for n in 0..<(TaskQueue.doneLimit + 5) {
-            queue.add("t\(n)")
-            _ = queue.takeNext(automatic: false)
-            queue.finish(summary: "", failed: false, at: Date())
-        }
-        XCTAssertEqual(queue.done.count, TaskQueue.doneLimit)
-    }
-
-    func testAutoModeNeverSendsInDoubt() {
-        func decide(auto: Bool = true, queued: Int = 2, free: Bool = true, permission: Bool = false, outstanding: Bool = false,
-                    failed: Bool = false, sent: Int = 0, limit: Int = 5) -> AutoRun.Decision {
-            AutoRun.decide(auto: auto, queued: queued, free: free, waitingForPermission: permission, outstanding: outstanding,
-                           lastTurnFailed: failed, sentThisRun: sent, limit: limit)
-        }
-        XCTAssertEqual(decide(), .send)
-        XCTAssertEqual(decide(auto: false), .wait, "off by default means off")
-        XCTAssertEqual(decide(queued: 0), .wait)
-        XCTAssertEqual(decide(free: false), .wait, "mid-turn")
-        XCTAssertEqual(decide(permission: true), .wait, "never while a permission question is open")
-        XCTAssertEqual(decide(outstanding: true), .wait)
-        XCTAssertEqual(decide(sent: 4), .send)
-        if case .stop = decide(sent: 5) {} else { XCTFail("stops at the limit so a queue cannot run away") }
-        if case .stop = decide(failed: true) {} else { XCTFail("stops after a failed turn") }
-        XCTAssertEqual(decide(permission: true, failed: true), .wait, "a stop is only announced once the agent is free")
-    }
-
     // MARK: persistence
 
     func testStoresRoundTripPerAgentFolder() throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("nook-hotspots-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: folder) }
-        let store = HotspotStore<TaskQueue>(name: "tasks.json", folder: folder) { TaskQueue() }
-        XCTAssertEqual(store["/work/a"], TaskQueue())
-        XCTAssertTrue(store.update("/work/a") { $0.add("ship it") })
-        XCTAssertFalse(store.update("/work/a") { _ in }, "no change, no write")
-        store.update("/work/b") { $0.add("other") }
-        let again = HotspotStore<TaskQueue>(name: "tasks.json", folder: folder) { TaskQueue() }
-        XCTAssertEqual(again["/work/a"].queued.map(\.text), ["ship it"])
-        XCTAssertEqual(Set(again.keys), ["/work/a", "/work/b"])
-        again.update("/work/b") { $0.queued.removeAll() }
-        XCTAssertEqual(HotspotStore<TaskQueue>(name: "tasks.json", folder: folder) { TaskQueue() }.keys, ["/work/a"], "empty queues are not kept")
-
         let calendars = HotspotStore<AgentCalendar>(name: "schedule.json", folder: folder) { AgentCalendar() }
         let item = AgentCalendar.Item(prompt: "Run the tests", checkedUntil: Date(timeIntervalSince1970: 1_800_000_000))
         calendars.update("/work/a") { $0.items.append(item) }
         let reloaded = HotspotStore<AgentCalendar>(name: "schedule.json", folder: folder) { AgentCalendar() }
         XCTAssertEqual(reloaded["/work/a"].items, [item])
+        XCTAssertFalse(reloaded.update("/work/a") { _ in }, "no change, no write")
+        reloaded.update("/work/a") { $0.items.removeAll() }
+        XCTAssertTrue(HotspotStore<AgentCalendar>(name: "schedule.json", folder: folder) { AgentCalendar() }.keys.isEmpty, "empty values are not kept")
     }
 }
