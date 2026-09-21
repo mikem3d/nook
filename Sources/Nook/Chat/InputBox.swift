@@ -11,7 +11,7 @@ final class InputTextView: NSTextView {
         guard string.isEmpty, !hasMarkedText() else { return }
         let origin = NSPoint(x: textContainerOrigin.x + (textContainer?.lineFragmentPadding ?? 0), y: textContainerOrigin.y)
         (placeholder as NSString).draw(at: origin, withAttributes: [
-            .font: font ?? .systemFont(ofSize: 15), .foregroundColor: NSColor.placeholderTextColor])
+            .font: font ?? TextSize.font(.input), .foregroundColor: NSColor.placeholderTextColor])
     }
 
     override func didChangeText() {
@@ -47,7 +47,7 @@ final class InputBox: NSView, NSTextViewDelegate {
 
     private let scroll = NSScrollView()
     private var height: NSLayoutConstraint!
-    private let inset = NSSize(width: 6, height: 6)
+    private var inset: NSSize { NSSize(width: TextSize.metric(7), height: TextSize.metric(7)) }
 
     var text: String {
         get { textView.string }
@@ -62,13 +62,10 @@ final class InputBox: NSView, NSTextViewDelegate {
     init() {
         super.init(frame: .zero)
         wantsLayer = true
-        layer?.cornerRadius = 9
 
-        textView.font = .systemFont(ofSize: 15)
         textView.isRichText = false
         textView.allowsUndo = true
         textView.drawsBackground = false
-        textView.textContainerInset = inset
         textView.isAutomaticQuoteSubstitutionEnabled = false
         textView.isAutomaticDashSubstitutionEnabled = false
         textView.isAutomaticTextReplacementEnabled = false
@@ -84,12 +81,22 @@ final class InputBox: NSView, NSTextViewDelegate {
         scroll.autohidesScrollers = true
         scroll.translatesAutoresizingMaskIntoConstraints = false
         addSubview(scroll)
-        height = heightAnchor.constraint(equalToConstant: 32)
+        height = heightAnchor.constraint(equalToConstant: 36)
         NSLayoutConstraint.activate([
             scroll.leadingAnchor.constraint(equalTo: leadingAnchor), scroll.trailingAnchor.constraint(equalTo: trailingAnchor),
             scroll.topAnchor.constraint(equalTo: topAnchor), scroll.bottomAnchor.constraint(equalTo: bottomAnchor),
             height,
         ])
+        applyTextSize()
+    }
+
+    /// Font, insets and corner follow the text-size setting; the height follows from the font's line metrics.
+    func applyTextSize() {
+        layer?.cornerRadius = TextSize.metric(10)
+        textView.font = TextSize.font(.input)
+        textView.textContainerInset = inset
+        textView.needsDisplay = true
+        updateHeight()
     }
 
     required init?(coder: NSCoder) { fatalError("not used") }

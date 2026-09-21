@@ -3,17 +3,24 @@ import AppKit
 /// The small panel shown while the talk key is held: level meter, who will receive the message,
 /// and the words so far. Never takes focus, and ignores the mouse unless it is offering a link.
 final class VoiceHUD: NSPanel {
-    private let meter = LevelMeter(frame: NSRect(x: 0, y: 0, width: 46, height: 28))
+    private static let baseSize = NSSize(width: 540, height: 88)
+    private static let meterSize = NSSize(width: 56, height: 34)
+
+    private let meter = LevelMeter(frame: NSRect(origin: .zero, size: VoiceHUD.meterSize))
     private let target = NSTextField(labelWithString: "")
     private let words = NSTextField(labelWithString: "")
     private var link: URL?
     private var hideTimer: Timer?
+    private let text = NSStackView()
+    private let row = NSStackView()
+    private var meterWidth: NSLayoutConstraint!
+    private var meterHeight: NSLayoutConstraint!
 
     init() {
-        super.init(contentRect: NSRect(x: 0, y: 0, width: 440, height: 72),
+        super.init(contentRect: NSRect(origin: .zero, size: Self.baseSize),
                    styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: true)
         isFloatingPanel = true
-        level = .statusBar // above the chat panel, which it may overlap
+        level = NookLevel.hud // above the chat panel, which it may overlap
         hidesOnDeactivate = false
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]
         isOpaque = false
@@ -32,27 +39,23 @@ final class VoiceHUD: NSPanel {
         glass.onClick = { [weak self] in self?.openLink() }
         contentView = glass
 
-        target.font = .monospacedSystemFont(ofSize: 10, weight: .semibold)
         target.textColor = .secondaryLabelColor
         target.lineBreakMode = .byTruncatingTail
-        words.font = .systemFont(ofSize: 13, weight: .medium)
         words.maximumNumberOfLines = 2
         words.cell?.truncatesLastVisibleLine = true
         words.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        let text = NSStackView(views: [target, words])
+        text.setViews([target, words], in: .top)
         text.orientation = .vertical
         text.alignment = .leading
-        text.spacing = 2
-        let row = NSStackView(views: [meter, text])
+        row.setViews([meter, text], in: .leading)
         row.alignment = .centerY
-        row.spacing = 12
-        row.edgeInsets = NSEdgeInsets(top: 10, left: 14, bottom: 10, right: 14)
         row.translatesAutoresizingMaskIntoConstraints = false
         glass.addSubview(row)
+        meterWidth = meter.widthAnchor.constraint(equalToConstant: Self.meterSize.width)
+        meterHeight = meter.heightAnchor.constraint(equalToConstant: Self.meterSize.height)
         NSLayoutConstraint.activate([
-            meter.widthAnchor.constraint(equalToConstant: 46),
-            meter.heightAnchor.constraint(equalToConstant: 28),
+            meterWidth, meterHeight,
             row.leadingAnchor.constraint(equalTo: glass.leadingAnchor),
             row.trailingAnchor.constraint(equalTo: glass.trailingAnchor),
             row.topAnchor.constraint(equalTo: glass.topAnchor),
@@ -111,8 +114,22 @@ final class VoiceHUD: NSPanel {
         dismiss()
     }
 
+    /// Read each time the panel shows, so it follows the setting without observing it.
+    private func applyTextSize() {
+        let size = TextSize.current
+        target.font = TextSize.mono(.caption, weight: .semibold)
+        words.font = TextSize.font(.title, weight: .medium)
+        text.spacing = size.metric(3)
+        row.spacing = size.metric(14)
+        row.edgeInsets = NSEdgeInsets(top: size.metric(12), left: size.metric(16), bottom: size.metric(12), right: size.metric(16))
+        meterWidth.constant = size.metric(Self.meterSize.width)
+        meterHeight.constant = size.metric(Self.meterSize.height)
+        setContentSize(NSSize(width: size.metric(Self.baseSize.width), height: size.metric(Self.baseSize.height)))
+    }
+
     /// Bottom centre of the screen the pointer is on, above the chat panel if that is showing.
     private func present() {
+        applyTextSize()
         let mouse = NSEvent.mouseLocation
         let screen = NSScreen.screens.first { $0.frame.contains(mouse) } ?? NSScreen.main ?? NSScreen.screens[0]
         let area = screen.visibleFrame

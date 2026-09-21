@@ -9,7 +9,7 @@ class MiniPanel: NSPanel {
         super.init(contentRect: NSRect(origin: .zero, size: size),
                    styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         isFloatingPanel = true
-        level = .floating
+        level = NookLevel.prompt
         hidesOnDeactivate = false
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         isOpaque = false
@@ -46,16 +46,17 @@ final class LinePrompt: MiniPanel {
     private var finish: ((String?) -> Void)?
 
     init(title: String, placeholder: String, beside anchor: NSWindow, done: @escaping (String?) -> Void) {
-        super.init(size: NSSize(width: 340, height: 64))
+        let size = TextSize.current
+        super.init(size: NSSize(width: size.metric(420), height: size.metric(78)))
         finish = done
         onCancel = { [weak self] in self?.end(nil) }
 
         let label = NSTextField(labelWithString: title)
-        label.font = .systemFont(ofSize: 11, weight: .semibold)
+        label.font = TextSize.font(.secondary, weight: .semibold)
         label.textColor = .secondaryLabelColor
         label.lineBreakMode = .byTruncatingMiddle
         field.placeholderString = placeholder
-        field.font = .systemFont(ofSize: 13)
+        field.font = TextSize.font(.body)
         field.bezelStyle = .roundedBezel
         field.focusRingType = .none
         field.target = self
@@ -64,12 +65,13 @@ final class LinePrompt: MiniPanel {
         let column = NSStackView(views: [label, field])
         column.orientation = .vertical
         column.alignment = .leading
-        column.spacing = 6
-        column.edgeInsets = NSEdgeInsets(top: 10, left: 12, bottom: 10, right: 12)
+        column.spacing = size.metric(7)
+        let side = size.metric(14)
+        column.edgeInsets = NSEdgeInsets(top: size.metric(12), left: side, bottom: size.metric(12), right: side)
         column.frame = glass.bounds
         column.autoresizingMask = [.width, .height]
         glass.addSubview(column)
-        field.widthAnchor.constraint(equalTo: column.widthAnchor, constant: -24).isActive = true
+        field.widthAnchor.constraint(equalTo: column.widthAnchor, constant: -side * 2).isActive = true
 
         let area = (anchor.screen ?? NSScreen.main)?.visibleFrame ?? anchor.frame
         setFrameOrigin(Self.origin(for: frame.size, beside: anchor.frame, in: area))
@@ -93,7 +95,7 @@ final class GhostChip: NSPanel {
 
     init(text: String) {
         super.init(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
-        level = .popUpMenu
+        level = NookLevel.ghost
         ignoresMouseEvents = true
         isOpaque = false
         backgroundColor = .clear
@@ -101,12 +103,12 @@ final class GhostChip: NSPanel {
         isReleasedWhenClosed = false
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
 
-        label.font = .systemFont(ofSize: 11, weight: .semibold)
+        label.font = TextSize.font(.secondary, weight: .semibold)
         label.textColor = .white
         let pill = NSView()
         pill.wantsLayer = true
         pill.layer?.backgroundColor = NSColor.controlAccentColor.cgColor
-        pill.layer?.cornerRadius = 11
+        pill.layer?.cornerRadius = TextSize.metric(28) / 2
         pill.addSubview(label)
         contentView = pill
         show(text)
@@ -118,8 +120,9 @@ final class GhostChip: NSPanel {
         guard label.stringValue != text else { return }
         label.stringValue = text
         label.sizeToFit()
-        let size = NSSize(width: label.frame.width + 20, height: 22)
-        label.setFrameOrigin(NSPoint(x: 10, y: (size.height - label.frame.height) / 2))
+        let pad = TextSize.metric(12)
+        let size = NSSize(width: label.frame.width + pad * 2, height: TextSize.metric(28))
+        label.setFrameOrigin(NSPoint(x: pad, y: ((size.height - label.frame.height) / 2).rounded()))
         setContentSize(size)
     }
 

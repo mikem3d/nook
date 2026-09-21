@@ -100,13 +100,14 @@ private final class BroadcastPanel: MiniPanel {
 
     init(agents: [AgentWindow], send: @escaping (String, [AgentWindow]) -> Void) {
         self.send = send
+        let size = TextSize.current
         let rows = CGFloat(agents.count)
-        super.init(size: NSSize(width: 420, height: 112 + rows * 22))
+        super.init(size: NSSize(width: size.metric(520), height: size.metric(136 + rows * 27)))
 
         let title = NSTextField(labelWithString: "Broadcast to agents")
-        title.font = .systemFont(ofSize: 13, weight: .semibold)
+        title.font = TextSize.font(.title, weight: .semibold)
         field.placeholderString = "Same message to every ticked agent…"
-        field.font = .systemFont(ofSize: 14)
+        field.font = TextSize.font(.body)
         field.bezelStyle = .roundedBezel
         field.focusRingType = .none
         field.target = self
@@ -115,9 +116,10 @@ private final class BroadcastPanel: MiniPanel {
         let ticks = NSStackView()
         ticks.orientation = .vertical
         ticks.alignment = .leading
-        ticks.spacing = 4
+        ticks.spacing = size.metric(5)
         for agent in agents {
             let box = NSButton(checkboxWithTitle: agent.session.label, target: nil, action: nil)
+            box.font = TextSize.font(.label)
             box.state = .on
             boxes.append((box, agent))
             ticks.addArrangedSubview(box)
@@ -131,13 +133,14 @@ private final class BroadcastPanel: MiniPanel {
         let column = NSStackView(views: [title, field, ticks, buttons])
         column.orientation = .vertical
         column.alignment = .leading
-        column.spacing = 8
-        column.edgeInsets = NSEdgeInsets(top: 12, left: 14, bottom: 12, right: 14)
+        column.spacing = size.metric(10)
+        let side = size.metric(16)
+        column.edgeInsets = NSEdgeInsets(top: size.metric(14), left: side, bottom: size.metric(14), right: side)
         column.frame = glass.bounds
         column.autoresizingMask = [.width, .height]
         glass.addSubview(column)
         for view in [field, buttons] as [NSView] {
-            view.widthAnchor.constraint(equalTo: column.widthAnchor, constant: -28).isActive = true
+            view.widthAnchor.constraint(equalTo: column.widthAnchor, constant: -side * 2).isActive = true
         }
 
         let screen = NSScreen.screens.first { $0.frame.contains(NSEvent.mouseLocation) } ?? NSScreen.main

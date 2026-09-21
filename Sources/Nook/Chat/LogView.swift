@@ -19,7 +19,8 @@ private final class CodeLayoutManager: NSLayoutManager {
             let inset = container.lineFragmentPadding
             let box = NSRect(x: origin.x + inset, y: origin.y + top.minY,
                              width: container.size.width - inset * 2, height: bottom.maxY - top.minY)
-            NSBezierPath(roundedRect: box, xRadius: 7, yRadius: 7).fill()
+            let radius = TextSize.metric(8)
+            NSBezierPath(roundedRect: box, xRadius: radius, yRadius: radius).fill()
         }
     }
 }
@@ -66,9 +67,8 @@ final class LogView: NSScrollView, NSTextViewDelegate {
     func show(_ session: AgentSession) {
         let transcript = session.transcript
         if session.id != sessionID || transcript.count < consumed {
+            reset()
             sessionID = session.id
-            (consumed, items, lengths, expanded, streaming, streamLength) = (0, [], [], [], "", 0)
-            storage.setAttributedString(NSAttributedString())
         }
         var firstChanged = items.count
         if transcript.count > consumed {
@@ -97,6 +97,12 @@ final class LogView: NSScrollView, NSTextViewDelegate {
         (streaming, streamLength) = (stream, live.length)
         storage.endEditing()
         if pinned { scrollToBottom() }
+    }
+
+    /// Forgets everything rendered, so the next `show` draws the log afresh (a new session, or a new text size).
+    func reset() {
+        (sessionID, consumed, items, lengths, expanded, streaming, streamLength) = (nil, 0, [], [], [], "", 0)
+        storage.setAttributedString(NSAttributedString())
     }
 
     /// The engine may append the finished entry a beat before it clears `streamingText`;
