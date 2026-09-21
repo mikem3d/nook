@@ -78,7 +78,8 @@ final class RoomScene: SKScene {
 
     /// A minimised or fully hidden window stops its SKView; `wake` frames are drawn after a change first.
     private var occluded = false
-    private var wake = 8
+    /// A resting window keeps drawing until this time, so a change is on screen before it pauses.
+    private var awakeUntil = CACurrentMediaTime() + 1
     private var fps = 15
 
     /// `roomIndex` picks the first scene round-robin; `avatarSeed` (the agent's folder path, else the
@@ -282,12 +283,19 @@ final class RoomScene: SKScene {
 
     /// Something visible changed: make sure a resting window draws it.
     private func poke() {
-        wake = 8
+        awakeUntil = CACurrentMediaTime() + 1
         view?.isPaused = false
     }
 
     @objc private func motionChanged() {
         still = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        poke()
+    }
+
+    /// The window animates between chamber and orb sizes. A paused view would keep showing its
+    /// last frame stretched to the new size, so every size step buys more drawing time.
+    override func didChangeSize(_ oldSize: CGSize) {
+        super.didChangeSize(oldSize)
         poke()
     }
 
@@ -504,7 +512,7 @@ final class RoomScene: SKScene {
                 view?.preferredFramesPerSecond = wanted
             }
             if resting {
-                if wake > 0 { wake -= 1 } else { view?.isPaused = true }
+                if CACurrentMediaTime() > awakeUntil { view?.isPaused = true }
             }
         }
 

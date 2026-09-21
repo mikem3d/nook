@@ -43,6 +43,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     /// Every optional capability plugs in here; each lives in its own file under Features/.
     private let features: [Feature] = [
         Persistence(), Hotkeys(), QuietMode(), SettingsFeature(), Voice(), Capture(), Handoff(),
+        FocusOverlay(), Hotspots(),
     ]
 
     /// Quiet mode: windows keep their state dot and badge but stop showing speech bubbles.
@@ -120,6 +121,12 @@ final class AppController: NSObject, NSApplicationDelegate {
         editItem.submenu = edit
         main.addItem(editItem)
         NSApp.mainMenu = main
+    }
+
+    /// A clickable object inside a scene (a notice board, a wall calendar) was clicked.
+    /// Features listen for `.nookHotspot`; userInfo carries "id" (String) and "window" (AgentWindow).
+    func hotspotClicked(_ id: String, in window: AgentWindow) {
+        NotificationCenter.default.post(name: .nookHotspot, object: self, userInfo: ["id": id, "window": window])
     }
 
     /// Features add their commands to the menu bar menu, above Quit.

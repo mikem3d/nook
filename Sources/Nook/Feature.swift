@@ -14,4 +14,6 @@ extension Notification.Name {
     static let nookSessionChanged = Notification.Name("nookSessionChanged")
     /// The active (focused) agent changed. Object: AppController.
     static let nookActiveChanged = Notification.Name("nookActiveChanged")
+    /// A scene hotspot was clicked. Object: AppController; userInfo: "id" and "window".
+    static let nookHotspot = Notification.Name("nookHotspot")
 }
