@@ -101,7 +101,12 @@ final class CalendarSync: NSObject, Feature {
             guard let self else { return }
             switch result {
             case .success(let output):
-                guard let events = EventDecoding.events(from: output.structured) else { return self.finish(.failed("The calendar job returned nothing readable.")) }
+                guard let events = EventDecoding.events(from: output.structured) else {
+                    // A refused connector usually makes the job answer in prose instead of the schema.
+                    let said = output.saidText ?? ""
+                    return self.finish(.failed(SyncProblem.isAuthorisation(said) ? SyncProblem.notAuthorised
+                                                                                 : "The calendar job returned nothing readable."))
+                }
                 let answer = output.structured as? [String: Any]
                 // Tools that failed look like an empty calendar; keeping the old cache beats believing that.
                 if let problem = SyncProblem.message(problem: answer?["problem"] as? String, eventCount: events.count) { return self.finish(.failed(problem)) }

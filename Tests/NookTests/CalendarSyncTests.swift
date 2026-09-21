@@ -188,7 +188,13 @@ final class CalendarSyncTests: XCTestCase {
 
     func testConnectorErrorIsNotAnEmptyCalendar() {
         XCTAssertNotNil(SyncProblem.message(problem: "Insufficient scope: required calendar.readonly", eventCount: 0))
-        XCTAssertTrue(SyncProblem.message(problem: "Insufficient scope", eventCount: 0)!.contains("Reconnect"))
+        let refused = SyncProblem.message(problem: "Insufficient scope", eventCount: 0)!
+        XCTAssertTrue(refused.contains("Connectors"), "it must say where to fix the grant")
+        XCTAssertTrue(refused.contains("Refresh"), "and how to come back")
+        // The same refusal reaches us as prose when the job ignores the schema.
+        XCTAssertTrue(SyncProblem.isAuthorisation("You don't have Google Calendar permissions authorized"))
+        XCTAssertTrue(SyncProblem.isAuthorisation("Request had insufficient authentication scopes"))
+        XCTAssertFalse(SyncProblem.isAuthorisation("the calendar server timed out"))
         XCTAssertNil(SyncProblem.message(problem: "one calendar failed", eventCount: 4), "a partial result is kept, and marked truncated")
         XCTAssertNil(SyncProblem.message(problem: " ", eventCount: 0))
         XCTAssertNil(SyncProblem.message(problem: nil, eventCount: 0))

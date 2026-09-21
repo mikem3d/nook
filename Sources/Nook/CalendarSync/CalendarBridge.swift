@@ -214,6 +214,9 @@ struct BridgeOutput {
     /// Tool names from `system/init`, when the output included it.
     var tools: [String]?
     var structured: Any?
+    /// The job's prose answer, kept ONLY so a refusal can be recognised. It may quote the user's
+    /// calendar, so it is never shown, logged or stored: see `SyncProblem.isAuthorisation`.
+    var saidText: String?
     var costUSD: Double = 0
     /// Set when the run did not succeed: the CLI's error subtype, or a short reason.
     var error: String?
@@ -237,6 +240,7 @@ struct BridgeOutput {
                 sawResult = true
                 output.costUSD = (event["total_cost_usd"] as? NSNumber)?.doubleValue ?? 0
                 output.structured = event["structured_output"]
+                output.saidText = event["result"] as? String
                 if event["is_error"] as? Bool == true || event["subtype"] as? String != "success" {
                     output.error = (event["subtype"] as? String).flatMap { $0 == "success" ? nil : $0 } ?? "error"
                 } else if output.structured == nil {

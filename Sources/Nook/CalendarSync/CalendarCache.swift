@@ -69,13 +69,27 @@ enum SyncPolicy {
 /// What the job said went wrong, turned into words for the panel. The connector's own message is
 /// an error text, not calendar data, but it is still shown only to the user and never logged.
 enum SyncProblem {
+    /// The connector is present but was never granted calendar access. This is the common case,
+    /// and no amount of retrying inside Nook fixes it: the grant happens in Claude.
+    static let notAuthorised = """
+        Your calendar connector is connected to Claude but has not been granted permission to read \
+        your calendar, so every request is refused.
+
+        To fix it: open Claude (the desktop or web app) > Settings > Connectors, disconnect Google \
+        Calendar, connect it again, and approve calendar access when Google asks. Then press Refresh here.
+        """
+
+    /// True when a message is the connector refusing for want of permission, rather than a real fault.
+    static func isAuthorisation(_ text: String) -> Bool {
+        let lower = text.lowercased()
+        let words = ["scope", "unauthor", "not authorized", "not authorised", "permission", "forbidden", "401", "403", "access denied", "consent", "re-authenticate", "reauthenticate"]
+        return words.contains { lower.contains($0) }
+    }
+
     /// Nil when the result can be trusted as the calendar's real contents.
     static func message(problem: String?, eventCount: Int) -> String? {
         guard let problem = problem?.trimmingCharacters(in: .whitespacesAndNewlines), !problem.isEmpty, eventCount == 0 else { return nil }
-        let lower = problem.lowercased()
-        if ["scope", "auth", "permission", "forbidden", "401", "403"].contains(where: lower.contains) {
-            return "Claude's calendar connector is connected but not allowed to read your calendar. Reconnect it in Claude (Settings > Connectors), grant calendar access, then retry."
-        }
+        if isAuthorisation(problem) { return notAuthorised }
         return "The calendar connector reported a problem: " + String(problem.prefix(200))
     }
 }
