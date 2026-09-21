@@ -30,6 +30,15 @@ final class AppController: NSObject, NSApplicationDelegate {
     private var demo: DemoDriver?
     private var menu: NSMenu!
     private var fixedScale = DockPrefs.fixedScale
+    private var defaultCorner = DockPrefs.defaultCorner
+    private var plusShown = DockPrefs.plusOrb
+    /// The new-agent buttons: one at the end of every stack, or a lone one when there are no agents.
+    /// They are laid out with the stacks but are not agents: never saved, closed, joined or counted.
+    private var plusOrbs: [StackKey: PlusOrbWindow] = [:]
+    /// The display the lone plus orb was last dragged to; the primary display until then.
+    private var plusHome: CGDirectDisplayID?
+    /// Filled by the NewAgent feature with the most recent folders.
+    let recentMenu = NSMenu(title: "Recent")
     private var closeUndo = CloseUndo()
     private var closeExpiry: DispatchWorkItem?
     private var keyMonitor: Any?
@@ -108,6 +117,9 @@ final class AppController: NSObject, NSApplicationDelegate {
         statusItem.button?.image = NSImage(systemSymbolName: "rectangle.stack.person.crop", accessibilityDescription: "Nook")
         menu = NSMenu()
         menu.addItem(withTitle: "New Agent…", action: #selector(newAgent), keyEquivalent: "n").target = self
+        let recent = NSMenuItem(title: "Recent", action: nil, keyEquivalent: "")
+        recent.submenu = recentMenu
+        menu.addItem(recent)
         menu.addItem(withTitle: "Add Demo Agents", action: #selector(startDemo), keyEquivalent: "").target = self
         menu.addItem(withTitle: "Close All Agents…", action: #selector(closeAllAgents), keyEquivalent: "").target = self
         menu.addItem(.separator())
@@ -140,17 +152,10 @@ final class AppController: NSObject, NSApplicationDelegate {
 
     // MARK: agents
 
-    @objc private func newAgent() {
-        NSApp.activate(ignoringOtherApps: true)
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = false
-        panel.prompt = "Start Agent"
-        panel.message = "Choose the project folder this agent works in."
-        if panel.runModal() == .OK, let url = panel.url {
-            addAgent(folder: url)
-        }
-    }
+    @objc private func newAgent() { NewAgent.shared?.present() }
+
+    /// Folders dropped on the menu bar icon start agents (see StatusDrop).
+    var statusButton: NSStatusBarButton? { statusItem.button }
 
     /// `resume` continues an earlier Claude Code session; `corner`, `minimised` and `scene` restore a
     /// saved layout. Without a `scene` the new-agent preference picks one (rotating by default).
@@ -338,9 +343,8 @@ final class AppController: NSObject, NSApplicationDelegate {
         let screen = NSScreen.screens.first { $0.frame.contains(mouse) } ?? self.screen(of: window)
         let area = screen.visibleFrame
         let centre = NSPoint(x: window.frame.midX, y: window.frame.midY)
-        let right = centre.x > area.midX
-        let bottom = centre.y < area.midY
-        let corner: Corner = bottom ? (right ? .bottomRight : .bottomLeft) : (right ? .topRight : .topLeft)
+        let corner = Self.corner(nearest: centre, in: area)
+        let (right, bottom) = (corner.isRight, corner.isBottom)
         let key = StackKey(display: screen.displayID, corner: corner)
         let neighbours = windows.filter { $0 !== window && $0.corner == corner && homes[ObjectIdentifier($0)] == key.display }
 
@@ -381,6 +385,11 @@ final class AppController: NSObject, NSApplicationDelegate {
         return !(unchanged && before == windows.map(ObjectIdentifier.init))
     }
 
+    private static func corner(nearest point: NSPoint, in area: NSRect) -> Corner {
+        let right = point.x > area.midX
+        return point.y < area.midY ? (right ? .bottomRight : .bottomLeft) : (right ? .topRight : .topLeft)
+    }
+
     private func screen(of window: AgentWindow) -> NSScreen {
         let home = homes[ObjectIdentifier(window)]
         return NSScreen.screens.first { $0.displayID == home } ?? NSScreen.main ?? NSScreen.screens[0]
@@ -389,9 +398,10 @@ final class AppController: NSObject, NSApplicationDelegate {
     @objc private func screensChanged() { layout(animated: false) }
 
     @objc private func defaultsChanged() {
-        // This fires for every preference in the app; only a new scale needs a fresh layout.
-        guard DockPrefs.fixedScale != fixedScale else { return }
-        fixedScale = DockPrefs.fixedScale
+        // This fires for every preference in the app; only these need a fresh layout.
+        let now = (DockPrefs.fixedScale, DockPrefs.defaultCorner, DockPrefs.plusOrb)
+        guard now != (fixedScale, defaultCorner, plusShown) else { return }
+        (fixedScale, defaultCorner, plusShown) = now
         layout(animated: true)
     }
 
@@ -416,6 +426,9 @@ final class AppController: NSObject, NSApplicationDelegate {
         for w in windows where w !== skipped && homes[ObjectIdentifier(w)] == display {
             result[w.corner, default: []].append(w)
         }
+        // With no agents anywhere the app would be invisible: one plus orb holds the default corner.
+        let home = NSScreen.screens.first { $0.displayID == plusHome } ?? NSScreen.screens.first
+        if plusShown, windows.isEmpty, display == home?.displayID { result[defaultCorner] = [] }
         return result
     }
 
@@ -434,7 +447,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         engine.orb = RoomScene.orb
         let specs = stacks.map { corner, members in
             DockLayout.Stack(corner: corner, axis: axes[StackKey(display: screen.displayID, corner: corner)] ?? .vertical,
-                             minimised: members.map(\.minimised))
+                             minimised: members.map(\.minimised), plus: plusShown)
         }
         let reserved = reservedBottomRect.flatMap { screen.frame.intersects($0) ? $0 : nil }
         return engine.solve(area: screen.visibleFrame, stacks: specs, reserved: reserved)
@@ -444,11 +457,13 @@ final class AppController: NSObject, NSApplicationDelegate {
         guard !NSScreen.screens.isEmpty else { return }
         adoptOrphans()
         var chambers: [(window: AgentWindow, frame: CGRect)] = []
+        var plusFrames: [StackKey: (frame: CGRect, scale: CGFloat)] = [:]
         for screen in NSScreen.screens {
             let stacks = self.stacks(on: screen.displayID)
             let solved = solve(screen, stacks: stacks, axes: axes)
             for (corner, members) in stacks {
                 guard let placement = solved[corner] else { continue }
+                if let plus = placement.plus { plusFrames[StackKey(display: screen.displayID, corner: corner)] = (plus, placement.scale) }
                 for (w, frame) in zip(members, placement.frames) {
                     // The dragged window follows the mouse and its slot stays open, so it joins nothing.
                     if !w.minimised, w !== dragging { chambers.append((w, frame)) }
@@ -458,11 +473,61 @@ final class AppController: NSObject, NSApplicationDelegate {
             }
         }
         guard only == nil else { return }
+        dockPlusOrbs(plusFrames, animated: animated)
         // Connectors follow where windows are going, not where the animation has got to, so they
         // open and close during a drag as the stacks make and lose room.
         let joined = Dictionary(uniqueKeysWithValues: zip(chambers.map { ObjectIdentifier($0.window) },
                                                           Connectors.edges(chambers.map(\.frame))))
         for w in windows { w.setNeighbours(joined[ObjectIdentifier(w)] ?? []) }
+    }
+
+    // MARK: plus orbs
+
+    private func dockPlusOrbs(_ frames: [StackKey: (frame: CGRect, scale: CGFloat)], animated: Bool) {
+        for (key, orb) in plusOrbs where frames[key] == nil {
+            orb.orderOut(nil)
+            plusOrbs[key] = nil
+        }
+        for (key, place) in frames {
+            let orb = plusOrbs[key] ?? PlusOrbWindow(art: art, controller: self)
+            plusOrbs[key] = orb
+            orb.corner = key.corner
+            orb.display = key.display
+            orb.setDimmed(active != nil)
+            orb.dock(to: place.frame, animated: animated)
+        }
+    }
+
+    /// The plus orb new agents would appear beside: the default corner's if it has one.
+    var plusOrb: PlusOrbWindow? {
+        plusOrbs.first { $0.key.corner == defaultCorner }?.value ?? plusOrbs.values.first
+    }
+
+    /// Dragging a plus orb picks the corner new agents appear in. The orb then goes back to the
+    /// end of its stack, or to that corner when it is the only thing on screen.
+    func plusDropped(_ orb: PlusOrbWindow) {
+        let centre = NSPoint(x: orb.frame.midX, y: orb.frame.midY)
+        let screen = NSScreen.screens.first { $0.frame.contains(centre) } ?? NSScreen.main ?? NSScreen.screens[0]
+        defaultCorner = Self.corner(nearest: centre, in: screen.visibleFrame)
+        plusHome = screen.displayID
+        UserDefaults.standard.set(defaultCorner.rawValue, forKey: DockPrefs.cornerKey)
+        layout(animated: true)
+        let name = ["bottom right", "bottom left", "top right", "top left"][defaultCorner.rawValue]
+        HUD.shared.show("New agents start at the \(name)", near: orb)
+    }
+
+    /// Where a folder can be dropped to start an agent at the end of a stack (see EdgeDrop).
+    func edgeZones() -> [(rect: CGRect, corner: Corner, display: UInt32)] {
+        NSScreen.screens.flatMap { screen -> [(rect: CGRect, corner: Corner, display: UInt32)] in
+            let stacks = self.stacks(on: screen.displayID)
+            let solved = solve(screen, stacks: stacks, axes: axes)
+            let engine = DockLayout(canvas: CGSize(width: RoomScene.W, height: RoomScene.H))
+            return stacks.keys.compactMap { corner in
+                let axis = axes[StackKey(display: screen.displayID, corner: corner)] ?? .vertical
+                return engine.edgeZone(of: corner, axis: axis, in: screen.visibleFrame, placements: solved)
+                    .map { ($0, corner, screen.displayID) }
+            }
+        }
     }
 
     // MARK: saved layout (used by Persistence)
@@ -562,6 +627,10 @@ enum DockPrefs {
             ?? (raw as? String).flatMap { Double($0.lowercased().replacingOccurrences(of: "x", with: "")) }
         return number.flatMap { [1, 1.5, 2].contains($0) ? CGFloat($0) : nil }
     }
+
+    /// The "+" orb at the end of every stack. On unless the user switched it off.
+    static let plusOrbKey = "nook.plusOrb"
+    static var plusOrb: Bool { UserDefaults.standard.object(forKey: plusOrbKey) as? Bool ?? true }
 
     static var defaultCorner: Corner {
         let raw = UserDefaults.standard.object(forKey: cornerKey)
