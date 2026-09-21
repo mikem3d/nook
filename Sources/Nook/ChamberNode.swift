@@ -1,8 +1,8 @@
 import AppKit
 import SpriteKit
 
-/// One scene of the theme: background, foreground, the vitals props where this scene places them,
-/// and its ambient animations. The character is not part of it, so chambers can be swapped under him.
+/// One scene of the theme: background, foreground, the vitals props and the hotspots where this
+/// scene places them, and its ambient animations. The character is not part of it, so chambers can be swapped under him.
 final class ChamberNode: SKNode {
     /// What the chamber shows when a layer will not load, so the window is never see-through.
     private static let bare = NSColor(red: 0.17, green: 0.16, blue: 0.23, alpha: 1)
@@ -25,6 +25,9 @@ final class ChamberNode: SKNode {
     let spec: Theme.Scene
     private var props: [String: PropNode] = [:]
     private var ambient: [AmbientNode] = []
+    private var hotspots: [String: HotspotNode] = [:]
+    /// The clickable rectangles, front to back.
+    private(set) var areas: [HotspotArea] = []
 
     init(art: Art, scene: Theme.Scene) {
         spec = scene
@@ -50,6 +53,17 @@ final class ChamberNode: SKNode {
             addChild(sprite)
             props[place.name] = PropNode(sprite: sprite, textures: textures)
         }
+
+        // Hotspots: the props that are buttons. A scene lists where it hangs them, or takes the defaults.
+        let declared = art.theme.hotspots ?? []
+        let spots = scene.hotspots ?? declared.map { Theme.Spot(id: $0.id, position: $0.position, z: $0.z) }
+        for spot in spots {
+            guard hotspots[spot.id] == nil, let spec = declared.first(where: { $0.id == spot.id }),
+                  let node = HotspotNode(art: art, spec: spec, position: spot.position, z: spot.z ?? spec.z) else { continue }
+            addChild(node)
+            hotspots[spot.id] = node
+        }
+        areas = hotspots.values.sorted { ($0.zPosition, $0.area.id) > ($1.zPosition, $1.area.id) }.map(\.area)
 
         for spec in scene.ambient ?? [] where spec.frame.count == 2 && spec.position.count == 2 && spec.frames > 0 {
             guard let sheet = try? art.texture(spec.sheet) else { continue }
@@ -87,6 +101,15 @@ final class ChamberNode: SKNode {
         guard let sprite = props[name]?.sprite else { return }
         sprite.color = color
         sprite.colorBlendFactor = amount
+    }
+
+    // MARK: hotspots
+
+    @discardableResult
+    func show(_ id: String, _ state: HotspotState) -> Bool { hotspots[id]?.show(state) ?? false }
+
+    func hover(_ id: String?) {
+        for (key, node) in hotspots { node.hovered = key == id }
     }
 
     // MARK: ambient

@@ -76,8 +76,10 @@ final class AgentWindow: NSPanel {
     }
 
     private func refreshToolTip() {
-        let tip = shownMinimised ? WindowChrome.tooltip(label: session.label, state: session.state,
+        var tip = shownMinimised ? WindowChrome.tooltip(label: session.label, state: session.state,
                                                         waitingForPermission: session.pending != nil, summary: session.summary) : nil
+        // An orb has no room for the marker, so its tooltip carries the warning.
+        if automation, tip != nil { tip? += "\nAutomatic sending is on" }
         if surface.toolTip != tip { surface.toolTip = tip }
     }
 
@@ -85,6 +87,34 @@ final class AgentWindow: NSPanel {
         guard id != scene else { return }
         scene = id
         room.setScene(id)
+        surface.hotspotsMoved()
+    }
+
+    // MARK: hotspots
+
+    /// True while queued tasks or scheduled prompts may be sent to this agent unattended; the scene shows a marker.
+    var automation = false {
+        didSet {
+            guard automation != oldValue else { return }
+            room.setAutomation(automation)
+            refreshToolTip()
+        }
+    }
+
+    /// The live hotspot under a point of the content view, if hotspots are live at all.
+    fileprivate func hotspot(at point: NSPoint, in size: NSSize) -> HotspotArea? {
+        guard case .hotspot(let id) = HotspotHit.target(point, in: size, minimised: minimised || shownMinimised,
+                                                        dimmed: room.isDimmed, areas: room.hotspotAreas) else { return nil }
+        return room.hotspotAreas.first { $0.id == id }
+    }
+
+    fileprivate func hover(_ area: HotspotArea?) { room.setHover(area?.id) }
+
+    /// Where a hotspot is on screen, for anchoring its panel; nil if this scene does not have it.
+    func screenRect(ofHotspot id: String) -> NSRect? {
+        guard let area = room.hotspotAreas.first(where: { $0.id == id }) else { return nil }
+        let s = frame.width / RoomScene.W
+        return NSRect(x: frame.minX + area.rect.minX * s, y: frame.minY + area.rect.minY * s, width: area.rect.width * s, height: area.rect.height * s)
     }
 
     /// The edges that touch another chamber. The scene only hears about it when the set changes.
@@ -127,6 +157,7 @@ final class AgentWindow: NSPanel {
             refreshToolTip()
         }
         room.configure(scale: scale, minimised: minimised)
+        surface.hotspotsMoved()
         guard animated else {
             alphaValue = 1
             if self.frame != frame { setFrame(frame, display: true) }
@@ -152,6 +183,11 @@ final class AgentWindow: NSPanel {
     }
 
     fileprivate func clicked(at point: NSPoint, in size: NSSize) {
+        // A hotspot opens its panel and nothing else: the agent is not activated.
+        if let area = hotspot(at: point, in: size) {
+            controller?.hotspotClicked(area.id, in: self)
+            return
+        }
         switch WindowChrome.hit(point, in: size, minimised: minimised) {
         case .close: controller?.requestClose(self)
         case .minimise, .restore: controller?.toggleMinimise(self)
@@ -269,9 +305,11 @@ private final class DropHighlightView: NSView {
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }
 
-/// Sits over the scene: tells a click from a drag and moves the window with the mouse.
-private final class InteractionView: NSView {
+/// Sits over the scene: tells a click from a drag, moves the window with the mouse, and lights
+/// the hotspot under the pointer.
+private final class InteractionView: NSView, NSViewToolTipOwner {
     weak var owner: AgentWindow?
+    private var hovering = false
     private var pressed: NSPoint?
     private var grab = NSPoint.zero
     private var dragging = false
@@ -280,6 +318,45 @@ private final class InteractionView: NSView {
     override init(frame: NSRect) {
         super.init(frame: frame)
         registerForDraggedTypes(DropClassifier.types + NSFilePromiseReceiver.readableDraggedTypes.map { NSPasteboard.PasteboardType($0) })
+        // The panel is never key and Nook is rarely the active app, so only `.activeAlways` sees the mouse.
+        // Events arrive only while the pointer moves over this window: nothing runs otherwise.
+        addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseMoved, .mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+                                       owner: self, userInfo: nil))
+    }
+
+    // MARK: hotspots
+
+    override func mouseMoved(with event: NSEvent) { hover(at: convert(event.locationInWindow, from: nil)) }
+    override func mouseExited(with event: NSEvent) { hover(at: nil) }
+
+    private func hover(at point: NSPoint?) {
+        let area = pressed == nil ? point.flatMap { owner?.hotspot(at: $0, in: bounds.size) } : nil
+        owner?.hover(area)
+        guard (area != nil) != hovering else { return }
+        hovering = area != nil
+        (hovering ? NSCursor.pointingHand : NSCursor.arrow).set()
+    }
+
+    /// One tooltip rectangle per hotspot, rebuilt when the scene, the scale or the orb state changes.
+    func hotspotsMoved() {
+        guard let owner else { return }
+        let key = owner.room.hotspotAreas.map { "\($0.id)\($0.rect)" }.joined() + "\(bounds.width)"
+        guard key != tipKey else { return }
+        tipKey = key
+        tipTags.forEach(removeToolTip)
+        let s = bounds.width / RoomScene.W
+        tipTags = owner.room.hotspotAreas.map {
+            addToolTip(NSRect(x: $0.rect.minX * s, y: $0.rect.minY * s, width: $0.rect.width * s, height: $0.rect.height * s), owner: self, userData: nil)
+        }
+        hover(at: nil)
+    }
+
+    private var tipKey = ""
+    private var tipTags: [NSView.ToolTipTag] = []
+
+    /// Asked when the tooltip is about to show, so a dimmed window's inert hotspots stay silent.
+    func view(_ view: NSView, stringForToolTip tag: NSView.ToolTipTag, point: NSPoint, userData data: UnsafeMutableRawPointer?) -> String {
+        owner?.hotspot(at: point, in: bounds.size)?.name ?? ""
     }
 
     required init?(coder: NSCoder) { fatalError("not used") }
@@ -306,6 +383,7 @@ private final class InteractionView: NSView {
             let p = event.locationInWindow
             guard hypot(p.x - pressed.x, p.y - pressed.y) > 3 else { return }
             dragging = true
+            hover(at: nil) // a drag that began on a hotspot is still a drag
             handingOff = event.modifierFlags.contains(.option) && Handoff.shared != nil
             if handingOff {
                 Handoff.shared?.dragBegan(from: owner)

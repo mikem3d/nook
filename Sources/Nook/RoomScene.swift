@@ -50,6 +50,10 @@ final class RoomScene: SKScene {
     private var bubble = ""
     private var unread = 0
     private var edges = Set<Edge>()
+    private var hotspotStates: [String: HotspotState] = [:]
+    private var hovered: String?
+    /// Lit under the floor while this agent may be sent work without the user watching.
+    private let autoMark = PixelGlyph.sprite(PixelGlyph.auto, color: NSColor(red: 0.97, green: 0.81, blue: 0.31, alpha: 1))
     /// The orb's unread badge bobs one art pixel to catch the eye.
     private var badgeLift: CGFloat = 0
     private var orbClock = 0.0
@@ -126,6 +130,13 @@ final class RoomScene: SKScene {
             glyph.zPosition = 21
             room.addChild(glyph)
         }
+
+        // On the rock under the floor: the one calm place no bubble, ladder or tunnel ever covers.
+        autoMark.anchorPoint = .zero
+        autoMark.position = CGPoint(x: 30, y: 6)
+        autoMark.zPosition = 12
+        autoMark.isHidden = true
+        room.addChild(autoMark)
 
         badgeBox.anchorPoint = CGPoint(x: 1, y: 0)
         badgeBox.zPosition = 21
@@ -210,7 +221,37 @@ final class RoomScene: SKScene {
         if refreshVitals() { poke() }
     }
 
+    // MARK: hotspots
+
+    /// Where the chamber's clickable props are, front to back, in canvas pixels. An orb has none.
+    var hotspotAreas: [HotspotArea] { minimised ? [] : chamber.areas }
+
+    /// Survives a change of scene: the new chamber's board shows the same parchments.
+    func showHotspot(_ id: String, _ state: HotspotState) {
+        guard hotspotStates[id] != state else { return }
+        hotspotStates[id] = state
+        if chamber.show(id, state) { poke() }
+    }
+
+    func setHover(_ id: String?) {
+        guard id != hovered else { return }
+        hovered = id
+        chamber.hover(id)
+        poke()
+    }
+
+    /// The marker that says automatic sending (queued tasks, scheduled prompts) is switched on.
+    func setAutomation(_ on: Bool) {
+        guard autoMark.isHidden == on else { return }
+        autoMark.isHidden = !on
+        poke()
+    }
+
+    private(set) var isDimmed = false
+
     func setDimmed(_ on: Bool) {
+        isDimmed = on
+        if on { setHover(nil) }
         dim.isHidden = !on
         orbNode.setDimmed(on)
         poke()
@@ -247,6 +288,8 @@ final class RoomScene: SKScene {
         placeActor()
         animation = ""
         refreshVitals()
+        for (id, state) in hotspotStates { chamber.show(id, state) }
+        hovered = nil
         layoutBubble()
         if minimised || still {
             old.removeFromParent()

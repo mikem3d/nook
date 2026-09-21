@@ -245,6 +245,43 @@ def _sized(rep, root, rel, want, pal_set, what) -> np.ndarray | None:
     return a
 
 
+def validate_hotspots(rep: Report, root: Path, man: dict, pal_set):
+    """Hotspot sheets (levels across, idle over hover), and that no scene hangs one where it cannot be
+    clicked or would be covered: the header, the ladder column, the tunnel mouths, the rock."""
+    cw, ch_ = man["canvas"]
+    geo = man.get("geometry") or {}
+    header, floor = geo.get("header", 11), geo.get("floor", 18)
+    ladder, tunnel = geo.get("ladder", [12, 14]), geo.get("tunnel", [16, 30])
+    spots = {h["id"]: h for h in man.get("hotspots") or []}
+    for h in spots.values():
+        w, hh = h["frame"]
+        _sized(rep, root, h["sheet"], (w * h["levels"], hh * 2), pal_set, f"{h['levels']} levels of {w}x{hh}, idle over hover")
+        if h.get("news"):
+            _sized(rep, root, h["news"]["sprite"], None, pal_set, "")
+        if h.get("digits"):
+            dw, dh = h["digits"]["frame"]
+            _sized(rep, root, h["digits"]["sheet"], (dw * 10, dh), pal_set, f"ten digits of {dw}x{dh}")
+        x, y, hw, hit_h = h.get("hit") or [0, 0, w, hh]
+        if x < 0 or y < 0 or x + hw > w or y + hit_h > hh:
+            rep.error(h["id"], "hotspot", "hit rectangle reaches outside the frame")
+    for scene in man["scenes"]:
+        for place in scene.get("hotspots") or []:
+            h = spots.get(place["id"])
+            if h is None:
+                rep.error(scene["id"], "hotspot", f"places '{place['id']}', which the theme does not declare")
+                continue
+            hx, hy, hw, hh = h.get("hit") or [0, 0] + h["frame"]
+            x0, y0 = place["position"][0] + hx, place["position"][1] + hy
+            x1, y1 = x0 + hw, y0 + hh
+            where = f"{scene['id']}/{place['id']}"
+            if x0 < 6 or x1 > cw - 6 or y0 < floor or y1 > ch_ - header:
+                rep.error(where, "hotspot", "hit rectangle leaves the chamber interior (header, floor or side rock)")
+            if x0 < ladder[0] + ladder[1] and x1 > ladder[0]:
+                rep.error(where, "hotspot", "hit rectangle crosses the ladder column")
+            if y0 < tunnel[0] + tunnel[1] and y1 > tunnel[0] and (x0 < 10 or x1 > cw - 10):
+                rep.error(where, "hotspot", "hit rectangle crosses a tunnel mouth")
+
+
 def validate_theme(rep: Report, root: Path, man: dict, pal_set):
     """Everything beyond the sheet and the scene layers: portrait, props, ambient, frame, orb, avatars."""
     cw, ch_ = man["canvas"]
@@ -272,6 +309,8 @@ def validate_theme(rep: Report, root: Path, man: dict, pal_set):
         for default, other in (scene.get("animations") or {}).items():
             if other not in man["character"]["animations"]:
                 rep.error(scene["id"], "animation", f"replaces '{default}' with '{other}', which the character sheet does not have")
+
+    validate_hotspots(rep, root, man, pal_set)
 
     frame = man.get("frame") or {}
     _sized(rep, root, frame.get("overlay"), (cw, ch_), pal_set, "the canvas")

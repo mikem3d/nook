@@ -16,6 +16,7 @@ Assets/themes/<theme>/frame/frame.png, ladder_top.png, ladder_bottom.png, tunnel
                             tunnel_right.png, sealed_top.png, sealed_bottom.png, sealed_left.png, sealed_right.png
 Assets/themes/<theme>/orb/back.png, ring.png, gem.png, alert.png, work.png
 Assets/themes/<theme>/props/<name>.png
+Assets/themes/<theme>/hotspots/<id>.png, <id>_news.png, digits.png
 Assets/themes/<theme>/scenes/<scene>/bg.png, fg.png, <ambient>.png
 ```
 Swap a PNG and it shows up on next launch. Only `character` and `scenes` are required in
@@ -50,6 +51,7 @@ Zones a scene must respect:
 - x 32..62: the vitals wall (skylight, shelf, jar, clock), unless the scene places them elsewhere.
 - x 84..115: the character (feet at x 100). The bench stands in front: top at row 84, x 66..133, so the
   lowest 6 px of the character are hidden.
+- x 63..84 and x 118..134, rows 54..75: the hotspots (task board, calendar), either side of the character.
 - x 136..180: the scene's own feature (forge, oven, still, bunks).
 - Upper right, x 40..188, rows 13..58: keep calm, the speech bubble covers it.
 
@@ -153,6 +155,38 @@ One PNG sheet per prop, states side by side, declared once in `theme.json` `prop
 | `hourglass` | 8x10 at [123, 24], on the bench | 4: sand running down | Hidden until a turn passes 5 minutes, then cycles one state a second. |
 `states` can be any number of 1 or more; the engine spreads the value over however many you draw.
 
+## Hotspots: the props that are buttons
+A hotspot is a prop the user clicks; the scene stays the UI and the props are its buttons. Declared
+once in `theme.json` `hotspots`, hung per scene through the scene's `hotspots` list
+(`{ "id", "position", "z"? }`; a hotspot a scene does not list is absent; no key: all at their defaults).
+```json
+{ "id": "tasks", "name": "Task board", "sheet": "hotspots/tasks.png", "frame": [22, 22], "levels": 6,
+  "hit": [1, 1, 20, 20], "position": [63, 32], "z": 0.6,
+  "news": { "sprite": "hotspots/tasks_news.png", "position": [16, 16] },
+  "digits": { "sheet": "hotspots/digits.png", "frame": [3, 5], "position": [5, 3] } }
+```
+| Key | Meaning |
+|---|---|
+| `id` | What the click means. The engine knows `tasks` and `calendar`; others are drawn and clickable but open nothing. |
+| `name` | The tooltip. |
+| `sheet`, `frame`, `levels` | `levels` columns by TWO rows of `frame`: idle on top, hover below. The hover row is the same art with a 1 px bright outline, so every frame keeps a 1 px transparent margin. |
+| `hit` | The clickable part of the frame, `[x, y, w, h]` from the frame's bottom-left. Optional: the whole frame. |
+| `news` | Optional overlay, placed inside the frame from its bottom-left, shown while the hotspot has news. |
+| `digits` | Optional: ten digits side by side (`0`..`9`), and where a two-digit number goes inside the frame. One digit is centred in the two-digit box; digits sit 1 px apart. |
+
+| Id | Placeholder | Levels | News | Shows |
+|---|---|---|---|---|
+| `tasks` | notice board, 22x22 at [63, 32] | 6: 0 to 5 parchments | wax seal, 5x5, top right | Open tasks (the user's queue plus the agent's unfinished plan; 5 means "5 or more"). The seal: something came back, or the plan changed, since the panel was last opened. |
+| `calendar` | wall calendar, 17x18 at [118, 33] | 1 | ribbon, 3x5, off the page's bottom right | Today's date, written by the engine with `digits`. The ribbon: a scheduled prompt runs today, or one was missed. |
+
+Placement rules (`sheet.py validate` and `HotspotTests` enforce them): the hit rectangle stays inside
+the chamber interior and off the header, the ladder column, the tunnel mouths, the dwarf, the vitals
+props and rows 0..54 (the bubble and its tail). The dwarf mine hangs the board left of the dwarf and
+the calendar right of him, rows 54..75; the workshop draws its calendar at z 2.2 (in front of the wall
+piece that hides the cart) and the mushroom farm moves it left of the falling drip.
+Hotspots are inert on an orb and on a window dimmed by another agent being active. While automatic
+sending is armed the engine lights a small amber fast-forward mark on the rock under the floor at [30, 6].
+
 ## Text
 Header, badge and speech bubble use Departure Mono (`fonts/DepartureMono-Regular.otf`, SIL OFL 1.1,
 licence alongside). It is drawn one font pixel per image pixel with no smoothing, then scaled like the
@@ -165,7 +199,7 @@ land on the art grid. Every glyph sits in a 7x11 cell. The bubble (box, clipped 
   manifest and `tools/art/palettes/dwarfmine.hex`. The palette is a table in
   `tools/placeholders/pixels.py`; saving a pixel outside it fails, so the 32-colour rule holds by construction.
 - `python3 tools/art/sheet.py validate` checks the installed theme: sizes, alpha, palette, colour
-  count, feet, drift, seams, orb circle, avatar swaps. `--assets set/ --palette name` checks a candidate.
+  count, feet, drift, seams, orb circle, avatar swaps, hotspot sheets and placement. `--assets set/ --palette name` checks a candidate.
 - `python3 tools/art/preview.py -o out/` writes contact sheet, GIFs, a composite per scene, stacked
   chambers with open connectors (`stack_vertical.png`, `stack_horizontal.png`, `stack_mountain.png`) and `orbs.png`.
 - `NOOK_PREVIEW=out/ swift test --filter PreviewTests` renders the same through the real engine.

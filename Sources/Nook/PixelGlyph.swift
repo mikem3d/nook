@@ -1,9 +1,11 @@
 import AppKit
 import SpriteKit
 
-/// Tiny engine-drawn marks (the header's close glyph), one image pixel per art pixel.
+/// Tiny engine-drawn marks (the header's close glyph, the automation marker), one image pixel per art pixel.
 enum PixelGlyph {
     static let close = ["X...X", ".X.X.", "..X..", ".X.X.", "X...X"]
+    /// Fast forward: work is sent to this agent automatically.
+    static let auto = ["X..X...", "XX.XX..", "XXXXXX.", "XX.XX..", "X..X..."]
 
     /// Rows read top to bottom; "X" is a lit pixel.
     static func sprite(_ rows: [String], color: NSColor = .white) -> SKSpriteNode {

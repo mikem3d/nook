@@ -34,10 +34,15 @@ enum EngineTest {
         var answered: String?
         var streamUpdates = 0
         var wasBusy = false
+        var todos: [AgentTodo] = []
         session.onChange = {
             for entry in session.transcript[logged...] { log("  transcript \(entry.kind): \(entry.text)") }
             logged = session.transcript.count
             if !session.streamingText.isEmpty { streamUpdates += 1 }
+            if session.todos != todos {
+                todos = session.todos
+                log("  todos " + todos.map { "[\($0.status.rawValue)] \($0.content) / \($0.activeForm)" }.joined(separator: "; "))
+            }
             let bubble = session.bubble.prefix(60).replacingOccurrences(of: "\n", with: "⏎")
             let line = "state=\(session.state.rawValue) bubble=\"\(bubble)\" "
                 + "stream=\(session.streamingText.count) summary=\"\(session.summary)\" "
