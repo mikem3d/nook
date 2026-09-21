@@ -6,6 +6,9 @@ import Foundation
 enum ProjectScan {
     static let root = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/projects")
 
+    /// Scratch folders that tools ran Claude in are not projects anyone wants to reopen.
+    private static let temporary = ["/tmp/", "/private/", "/var/"]
+
     /// Most recently used first. Slow enough (one directory listing per project) to keep off the main thread.
     static func suggestions(limit: Int = 40, fileManager: FileManager = .default) -> [FolderChoice] {
         let keys: [URLResourceKey] = [.contentModificationDateKey, .isDirectoryKey]
@@ -22,7 +25,8 @@ enum ProjectScan {
         // the candidates, and the newest session file then gives the real order.
         let projects = listing(root).filter { $0.url.hasDirectoryPath }.sorted { $0.modified > $1.modified }.prefix(limit)
         let found = projects.compactMap { project -> (choice: FolderChoice, used: Date)? in
-            guard let path = ProjectPaths.decode(project.url.lastPathComponent, isDirectory: isDirectory) else { return nil }
+            guard let path = ProjectPaths.decode(project.url.lastPathComponent, isDirectory: isDirectory),
+                  !temporary.contains(where: path.hasPrefix) else { return nil }
             let newest = listing(project.url).filter { $0.url.pathExtension == "jsonl" }.max { $0.modified < $1.modified }
             let choice = FolderChoice(path: NewAgentRules.canonical(path), source: .suggested,
                                       sessionID: newest?.url.deletingPathExtension().lastPathComponent)
