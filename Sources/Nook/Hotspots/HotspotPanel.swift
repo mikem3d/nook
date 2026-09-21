@@ -1,16 +1,13 @@
 import AppKit
 import SwiftUI
 
-/// Every text size the hotspot panels use. `scale` is the hook for the app-wide text size
-/// preference: set it once and both panels follow.
+/// Every text size the hotspot panels use, in one table, all following the app-wide `nook.textSize` setting.
 enum HotspotText {
-    static var scale: CGFloat = 1
-
-    static var title: Font { .system(size: 18 * scale, weight: .semibold) }
-    static var heading: Font { .system(size: 13 * scale, weight: .semibold) }
-    static var body: Font { .system(size: 15 * scale) }
-    static var caption: Font { .system(size: 13 * scale) }
-    static var day: Font { .system(size: 14 * scale).monospacedDigit() }
+    static var title: Font { .system(size: TextSize.current.points(18), weight: .semibold) }
+    static var heading: Font { .system(size: TextSize.points(.secondary), weight: .semibold) }
+    static var body: Font { .system(size: TextSize.points(.body)) }
+    static var caption: Font { .system(size: TextSize.points(.secondary)) }
+    static var day: Font { .system(size: TextSize.points(.label)).monospacedDigit() }
 }
 
 /// Where a panel goes: beside the agent window on the side with more room, else above or below it.
@@ -42,7 +39,7 @@ final class HotspotPanel: NSPanel {
     init() {
         super.init(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         isFloatingPanel = true
-        level = .floating
+        level = NookLevel.prompt // above the focus overlay, level with the agent window it hangs off
         hidesOnDeactivate = false
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]
         isOpaque = false

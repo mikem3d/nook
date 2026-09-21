@@ -52,7 +52,7 @@ final class RoomScene: SKScene {
     private var edges = Set<Edge>()
     private var hotspotStates: [String: HotspotState] = [:]
     private var hovered: String?
-    /// Lit in the corner of the chamber while this agent may be sent work without the user watching.
+    /// Lit under the floor while this agent may be sent work without the user watching.
     private let autoMark = PixelGlyph.sprite(PixelGlyph.auto, color: NSColor(red: 0.97, green: 0.81, blue: 0.31, alpha: 1))
     /// The orb's unread badge bobs one art pixel to catch the eye.
     private var badgeLift: CGFloat = 0
@@ -131,9 +131,10 @@ final class RoomScene: SKScene {
             room.addChild(glyph)
         }
 
-        autoMark.anchorPoint = CGPoint(x: 0, y: 1)
-        autoMark.position = CGPoint(x: 28, y: Self.H - Self.bar - 2)
-        autoMark.zPosition = 9
+        // On the rock under the floor: the one calm place no bubble, ladder or tunnel ever covers.
+        autoMark.anchorPoint = .zero
+        autoMark.position = CGPoint(x: 30, y: 6)
+        autoMark.zPosition = 12
         autoMark.isHidden = true
         room.addChild(autoMark)
 

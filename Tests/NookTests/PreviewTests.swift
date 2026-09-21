@@ -74,6 +74,30 @@ final class PreviewTests: XCTestCase {
             try renderer.write(renderer.stitch(orbs, vertical: false, gap: 8), to: out.appendingPathComponent("orbs-\(tag).png"))
         }
 
+        // Hotspots: idle and empty, hovered, and full with news, the auto marker and the widest bubble over them.
+        for (index, choice) in art.sceneChoices.enumerated() {
+            let idle = chamber(index, 2, state: .idle, folder: "/h/\(index)", started: nil)
+            idle.showHotspot("calendar", HotspotState(number: 7))
+            let hover = chamber(index, 2, state: .idle, folder: "/h/\(index)", started: nil)
+            hover.showHotspot("tasks", HotspotState(level: 2))
+            hover.showHotspot("calendar", HotspotState(number: 21))
+            hover.setHover(index % 2 == 0 ? "tasks" : "calendar")
+            let news = chamber(index, 2, edges: [.top, .left, .right], state: .talking, bubble: Self.long, folder: "/h/\(index)")
+            news.showHotspot("tasks", HotspotState(level: 9, news: true))
+            news.showHotspot("calendar", HotspotState(news: true, number: 30))
+            news.setAutomation(true)
+            try renderer.write(renderer.stitch([idle, hover, news].map { try renderer.image(of: $0, seconds: 2) }, vertical: false, gap: 8),
+                               to: out.appendingPathComponent("hotspots-\(choice.id)-2x.png"))
+        }
+        for scale in [1, 1.5] as [CGFloat] {
+            let small = chamber(0, scale, state: .idle, folder: "/h/0", started: nil)
+            small.showHotspot("tasks", HotspotState(level: 3, news: true))
+            small.showHotspot("calendar", HotspotState(news: true, number: 21))
+            small.setHover("calendar")
+            small.setAutomation(true)
+            try renderer.write(renderer.image(of: small, seconds: 1), to: out.appendingPathComponent("hotspots-workshop-\(scale)x.png"))
+        }
+
         // Halfway through a scene change.
         let switching = chamber(0, 2, folder: "/a")
         _ = try renderer.image(of: switching, seconds: 0.5)

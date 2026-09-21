@@ -74,6 +74,6 @@ def overlay(size, paint):
 # id, tooltip, frame, levels, painter, hit [x, y, w, h] inside the frame from its bottom-left,
 # default position, z, news (painter, size, place in the frame), digits place in the frame
 HOTSPOTS = [
-    ("tasks", "Task board", (22, 22), 6, board, [1, 1, 20, 20], bl(63, 56, 22), 0.6, (seal, (5, 5), [16, 16]), None),
+    ("tasks", "Task board", (22, 22), 6, board, [1, 1, 20, 20], bl(63, 54, 22), 0.6, (seal, (5, 5), [16, 16]), None),
     ("calendar", "Calendar", (17, 18), 1, almanac, [1, 1, 15, 16], bl(118, 57, 18), 0.6, (ribbon, (3, 5), [12, 0]), [5, 3]),
 ]

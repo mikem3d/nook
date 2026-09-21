@@ -4,7 +4,7 @@ in front of the dwarf) and returns the scene's ambient animations and manifest e
 Zones every scene respects (docs/ART.md): the ladder column x 12..25, the tunnel mouths x < 10 and
 x >= 182 on rows 62..91, the vitals wall x 32..62, the dwarf at x 84..115, the scene's own feature
 at x 136..180. The hotspots hang either side of the dwarf, below the bubble: the task board at x 63..84 and
-the calendar at x 118..134, rows 56..77; a scene moves one through its "hotspots" extra. The upper right stays calm: the speech bubble covers it.
+the calendar at x 118..134, rows 54..75; a scene moves one through its "hotspots" extra. The upper right stays calm: the speech bubble covers it.
 """
 from .layout import W, H, BAR, FLOOR, BENCH_TOP, BENCH_X, BENCH_W, bl
 from .pixels import Img, noise, sheet
@@ -261,7 +261,7 @@ def mushrooms():
     drip = anim("drip", [drop], 1, 131, BAR, path=path)
     fg.blit(top, 0, D)
     # Left of the falling drip, so the drop never passes behind the calendar.
-    return bg, fg, [spores, drip], {"hotspots": {"calendar": {"position": bl(112, 57, 18)}}}
+    return bg, fg, [spores, drip], {"hotspots": {"calendar": {"position": bl(114, 57, 18)}}}
 
 
 def quarters():

@@ -16,9 +16,9 @@ final class HotspotStore<Value: Codable & Equatable> {
         let folder = folder ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Nook")
         file = folder.appendingPathComponent(name)
         self.empty = empty
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        agents = (try? Data(contentsOf: file)).flatMap { try? decoder.decode(File.self, from: $0) }?.agents ?? [:]
+        // Dates keep JSONEncoder's default form (seconds as a number): it round-trips exactly, which
+        // ISO 8601 text does not, and "did anything change" is decided by comparing values.
+        agents = (try? Data(contentsOf: file)).flatMap { try? JSONDecoder().decode(File.self, from: $0) }?.agents ?? [:]
     }
 
     var keys: [String] { Array(agents.keys) }
@@ -39,7 +39,6 @@ final class HotspotStore<Value: Codable & Equatable> {
     private func save() {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        encoder.dateEncodingStrategy = .iso8601
         guard let data = try? encoder.encode(File(agents: agents)) else { return }
         try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
         try? data.write(to: file, options: .atomic)
