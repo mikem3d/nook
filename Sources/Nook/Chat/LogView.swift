@@ -38,6 +38,12 @@ final class LogView: NSScrollView, NSTextViewDelegate {
     private var expanded = Set<Int>()
     private var streaming = ""
     private var streamLength = 0
+    /// Item index -> the shell run's `version` as last drawn. A shell block changes in place
+    /// (output arriving, a button pressed), so it is redrawn when its version moves.
+    private var shellVersions: [Int: Int] = [:]
+
+    /// A button inside a shell result block was clicked.
+    var onShell: ((ShellAction) -> Void)?
 
     init() {
         let manager = CodeLayoutManager()
@@ -75,6 +81,10 @@ final class LogView: NSScrollView, NSTextViewDelegate {
             firstChanged = LogModel.append(transcript[consumed...], at: consumed, to: &items)
             consumed = transcript.count
         }
+        for (index, drawn) in shellVersions {
+            guard items.indices.contains(index), case let .message(.shell(run), _) = items[index], run.version != drawn else { continue }
+            firstChanged = min(firstChanged, index)
+        }
         let stream = Self.tail(session.streamingText, after: items.last)
         guard firstChanged < items.count || stream != streaming else { return }
 
@@ -84,10 +94,12 @@ final class LogView: NSScrollView, NSTextViewDelegate {
         if firstChanged < items.count {
             storage.deleteCharacters(in: NSRange(location: keep, length: storage.length - keep))
             lengths.removeSubrange(firstChanged...)
-            for item in items[firstChanged...] {
+            shellVersions = shellVersions.filter { $0.key < firstChanged }
+            for (index, item) in zip(firstChanged..., items[firstChanged...]) {
                 let rendered = render(item)
                 storage.append(rendered)
                 lengths.append(rendered.length)
+                if case let .message(.shell(run), _) = item { shellVersions[index] = run.version }
             }
         } else {
             storage.deleteCharacters(in: NSRange(location: storage.length - streamLength, length: streamLength))
@@ -102,6 +114,7 @@ final class LogView: NSScrollView, NSTextViewDelegate {
     /// Forgets everything rendered, so the next `show` draws the log afresh (a new session, or a new text size).
     func reset() {
         (sessionID, consumed, items, lengths, expanded, streaming, streamLength) = (nil, 0, [], [], [], "", 0)
+        shellVersions = [:]
         storage.setAttributedString(NSAttributedString())
     }
 
@@ -141,6 +154,10 @@ final class LogView: NSScrollView, NSTextViewDelegate {
         let attributes = storage.attributes(at: charIndex, effectiveRange: nil)
         if let start = attributes[.nookToggle] as? Int {
             toggle(start)
+            return true
+        }
+        if let action = attributes[.nookShell] as? ShellAction {
+            onShell?(action)
             return true
         }
         if let code = attributes[.nookCopy] as? String {
