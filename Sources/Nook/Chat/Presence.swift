@@ -93,9 +93,27 @@ enum PartialJSON {
 /// Turns a `tool_use_result` into one substantive line: what came back, or how it failed.
 enum ToolReport {
     static func summarise(name: String, result: Any?, failed: Bool, content: String = "") -> String {
-        let body = detail(name: name, result: result, content: content)
-        guard failed else { return body.isEmpty ? "done" : body }
-        return "failed" + (body.isEmpty ? "" : ": " + body)
+        guard failed else {
+            let body = detail(name: name, result: result, content: content)
+            return body.isEmpty ? "done" : body
+        }
+        // A failure is worth its own words, not a line count.
+        let said = problem(result: result, content: content)
+        return "failed" + (said.isEmpty ? "" : ": " + said)
+    }
+
+    /// What the tool complained about: whichever of its channels actually said something.
+    private static func problem(result: Any?, content: String) -> String {
+        var candidates: [String] = []
+        if let text = result as? String { candidates.append(text) }
+        if let result = result as? [String: Any] {
+            candidates += ["stderr", "error", "message", "content", "stdout"].compactMap { result[$0] as? String }
+        }
+        candidates.append(content)
+        guard let said = candidates.first(where: { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) else { return "" }
+        // The CLI puts the exit status on its own first line, so keep the line that says why too.
+        let lines = said.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        return lines.prefix(2).joined(separator: " · ").prefix(100).description
     }
 
     private static func detail(name: String, result: Any?, content: String) -> String {

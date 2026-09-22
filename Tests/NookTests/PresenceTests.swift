@@ -47,6 +47,10 @@ final class ToolReportTests: XCTestCase {
         XCTAssertEqual(ToolReport.summarise(name: "Bash", result: ["stdout": "", "stderr": ""], failed: false), "no output")
         XCTAssertEqual(ToolReport.summarise(name: "Bash", result: ["stdout": "", "stderr": "ls: no such file"], failed: true),
                        "failed: ls: no such file")
+        // The exit status comes on its own line, with the reason under it: keep both.
+        XCTAssertEqual(ToolReport.summarise(name: "Bash", result: nil, failed: true,
+                                            content: "Error: Exit code 1\ncat: /nope: No such file\n"),
+                       "failed: Error: Exit code 1 · cat: /nope: No such file")
         XCTAssertEqual(ToolReport.summarise(name: "Bash", result: ["stdout": "x", "stderr": "", "interrupted": true], failed: false),
                        "interrupted")
     }
