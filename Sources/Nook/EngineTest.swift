@@ -5,9 +5,12 @@ import Foundation
 ///   Nook --engine-test <folder> --say=<text> [--auto-allow | --auto-deny]
 ///        [--attach=<file>]... [--resume=<session-id>] [--model=<name>] [--ask]
 ///        [--interrupt-after=<seconds>] [--then=<text>]
+///        [--meanwhile=<text>] [--meanwhile-after=<seconds>] [--allow-after=<seconds>]
 ///
 /// `--ask` makes Bash, Write and Edit prompt even when the user's settings allow them.
 /// `--then` sends a second message after the first turn's result (exercises restart after a crash).
+/// `--meanwhile` types ahead while the first turn runs; `--allow-after` delays the permission answer,
+/// so the typed-ahead message has to wait in the queue.
 /// Exits 0 when the last turn's result arrives, 1 if the session dies first, 2 on bad usage.
 enum EngineTest {
     static func run(_ args: [String]) -> Never {
@@ -77,7 +80,13 @@ enum EngineTest {
                 answered = request.requestID
                 log("  permission \(request.tool) \(request.input)")
                 if let allow {
-                    DispatchQueue.main.async { session.answerPermission(allow: allow) }
+                    // `--allow-after` leaves the question open for a while, which is the one state
+                    // where a typed-ahead message has to wait in the queue.
+                    let delay = values("allow-after").first.flatMap(Double.init) ?? 0
+                    DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                        log("  answering \(allow ? "allow" : "deny"), queued=\(session.queue.items.count)")
+                        session.answerPermission(allow: allow)
+                    }
                 } else {
                     log("  no --auto-allow or --auto-deny given; interrupting")
                     DispatchQueue.main.async { session.interrupt() }

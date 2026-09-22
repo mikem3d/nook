@@ -264,7 +264,7 @@ final class AgentSession {
     /// `attachments` are files (images included) the agent should look at with this message.
     ///
     /// Typing ahead is allowed: a message sent while a turn is running goes straight down stdin,
-    /// and the CLI folds it into that turn at its next step (measured live; see PRESENCE.md). The
+    /// and the CLI folds it into that turn at its next step (measured live; see docs/PRESENCE.md). The
     /// one exception is a permission question, which stops the CLI reading stdin at all: those
     /// messages wait in `queue`, where the user can still cancel them.
     func send(_ text: String, attachments: [URL] = []) {
@@ -416,14 +416,13 @@ final class AgentSession {
                     let id = block["id"] as? String ?? UUID().uuidString
                     let input = block["input"] as? [String: Any] ?? [:]
                     if !nested { _ = plan.toolUse(id: block["id"] as? String, name: name, input: input) }
-                    let brief = Self.brief(input)
                     // The row is usually already on screen from the stream; this only settles its
                     // argument, now that the whole input has arrived.
                     if let entry = toolEntry[id], transcript.indices.contains(entry) {
-                        transcript[entry].tool?.argument = brief
+                        transcript[entry].tool?.argument = Self.argument(input)
                     } else {
                         transcript.append(.init(kind: .tool, text: name,
-                                                tool: ToolRow(id: id, name: name, argument: brief)))
+                                                tool: ToolRow(id: id, name: name, argument: Self.argument(input))))
                         toolEntry[id] = transcript.count - 1
                         openTools.append(id)
                     }
@@ -760,6 +759,14 @@ final class AgentSession {
                 self.onChange?()
             }
         }
+    }
+
+    /// The whole argument for a tool row; the log shortens it for display.
+    private static func argument(_ input: [String: Any]) -> String {
+        for key in PartialJSON.keys {
+            if let value = input[key] as? String { return value }
+        }
+        return ""
     }
 
     private static func brief(_ input: [String: Any]) -> String {

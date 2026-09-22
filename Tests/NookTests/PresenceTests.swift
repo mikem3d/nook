@@ -23,7 +23,7 @@ final class PartialJSONTests: XCTestCase {
 
     func testEscapes() {
         XCTAssertEqual(PartialJSON.argument(#"{"pattern": "a\"b\\c\nd"#), "a\"b\\c\nd")
-        XCTAssertEqual(PartialJSON.argument(#"{"query": "café"#), "café")
+        XCTAssertEqual(PartialJSON.argument(#"{"query": "caf\u00e9"#), "café", "a unicode escape")
         XCTAssertEqual(PartialJSON.argument(#"{"query": "half \u00"#), "half ", "cut inside an escape")
     }
 
@@ -133,12 +133,23 @@ final class MessageQueueTests: XCTestCase {
         XCTAssertEqual(queue.take(), [])
     }
 
-    /// Typed text is never lost: a message goes into the queue while a permission question is
-    /// open, and leaves it the moment the question is answered.
+    /// Typed text is never lost. A permission question stops the CLI reading stdin, so anything
+    /// typed then waits where the user can still take it back; the live check that it goes out on
+    /// "Allow" is in the engine test (--allow-after with --meanwhile).
     func testSessionHoldsTypeAheadBehindAPermissionQuestion() {
-        let session = AgentSession(label: "demo", cwd: nil)
-        session.send("go") // demo mode: no process, nothing queued
-        XCTAssertTrue(session.queue.isEmpty)
+        let folder = URL(fileURLWithPath: NSTemporaryDirectory())
+        let session = AgentSession(label: "test", cwd: folder) // never started: nothing is launched
+        session.feed(["type": "control_request", "request_id": "r1",
+                      "request": ["subtype": "can_use_tool", "tool_name": "Bash", "input": ["command": "rm -rf /"]]])
+        XCTAssertNotNil(session.pending)
+
+        session.send("wait, no")
+        session.send("do this instead")
+        XCTAssertEqual(session.queue.items.map(\.text), ["wait, no", "do this instead"])
+        XCTAssertFalse(session.transcript.contains { $0.kind == .user }, "nothing has been said to the agent yet")
+
+        session.cancelQueued(session.queue.items[0].id)
+        XCTAssertEqual(session.queue.items.map(\.text), ["do this instead"])
     }
 }
 
