@@ -85,7 +85,8 @@ final class ReadableTests: XCTestCase {
         // Nothing in the log is below 12 pt at the default, tool lines and system notes included.
         TextSize.current = .medium
         let items: [LogItem] = [.message(.assistant, "# H\ntext `code`\n```sh\nls\n```\n- a"), .message(.user, "u"), .message(.system, "note"),
-                                .tools(start: 0, lines: ["a", "b", "c", "d"])]
+                                .tools(start: 0, rows: ["a", "b", "c", "d"].map { ToolRow(id: $0, name: $0, status: .ok, detail: "2 lines") }),
+                                .thinking(start: 1, text: "reasoning", tokens: 30, live: false)]
         for item in items {
             let text = LogRenderer.render(item, expanded: true)
             text.enumerateAttribute(.font, in: NSRange(location: 0, length: text.length)) { value, range, _ in

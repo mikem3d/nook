@@ -8,13 +8,20 @@ enum AgentState: String {
 
 struct TranscriptEntry {
     enum Kind: Equatable {
-        case user, assistant, tool, system
+        case user, assistant, tool, system, thinking
         /// A command the user typed into the chat input and Nook ran itself. The payload is a
         /// reference type because the block fills in as the command runs.
         case shell(ShellRun)
     }
-    let kind: Kind
-    let text: String
+    var kind: Kind
+    var text: String
+    /// On a `.tool` entry: that call's live state, from the moment it starts forming.
+    var tool: ToolRow?
+    /// On a `.thinking` entry: how much reasoning it holds. The CLI reports this even when the
+    /// reasoning text itself is withheld, which is the usual case.
+    var thinkingTokens = 0
+    /// On a `.user` entry: it was typed while a turn was already running.
+    var midTurn = false
 }
 
 struct PermissionRequest {
@@ -53,6 +60,35 @@ final class AgentSession {
     private(set) var changedFiles = 0
     /// When the current turn began; nil while the agent is not working.
     private(set) var turnStarted: Date?
+
+    // --- Presence: what the agent is doing between sending and replying. ---
+    /// The reasoning being streamed right now, empty when no thinking block is open. Often empty
+    /// even while the agent thinks, because the CLI withholds the text and reports tokens instead.
+    private(set) var thinkingText = ""
+    /// Estimated reasoning tokens in the open thinking block.
+    private(set) var thinkingTokens = 0
+    /// The transcript index of the open thinking block, so the log can keep it expanded.
+    private(set) var openThinking: Int?
+    /// Messages typed while a permission question was open, waiting to go. Cancellable.
+    private(set) var queue = MessageQueue()
+
+    /// What to say the agent is doing, in plain words. Drives the activity line and the avatar.
+    var phase: ActivityPhase {
+        if let pending { return .approval(tool: pending.tool) }
+        guard turnStarted != nil || state.busy else { return .idle }
+        if let row = runningTool { return .running(tool: row.name, argument: row.argument) }
+        if !streamingText.isEmpty { return .replying }
+        if openThinking != nil { return .thinking(tokens: thinkingTokens) }
+        return .sending
+    }
+
+    /// The call running right now, if any: the newest tool row that has not come back.
+    var runningTool: ToolRow? {
+        for id in openTools.reversed() {
+            if let index = toolEntry[id], let row = transcript[index].tool, row.status == .running { return row }
+        }
+        return nil
+    }
 
     // --- Read by the hotspots (task board, calendar). ---
     /// The agent's own plan: the latest list it kept with its task tools (see `AgentPlan`).
@@ -103,6 +139,14 @@ final class AgentSession {
     private var streamFlushScheduled = false
     private var turnSummary: String?
     private var lastAssistantText = ""
+
+    /// Open stream blocks by their index in the message, so deltas find what they belong to.
+    private enum Block { case text, thinking(entry: Int), tool(entry: Int, id: String) }
+    private var blocks: [Int: Block] = [:]
+    /// Partial `input_json` per block index, and the transcript row each tool id owns.
+    private var toolJSON: [Int: String] = [:]
+    private var toolEntry: [String: Int] = [:]
+    private var openTools: [String] = []
 
     init(label: String, cwd: URL?, resume: String? = nil) {
         self.label = label
@@ -194,6 +238,7 @@ final class AgentSession {
         pending = nil
         inFlight = nil
         turnStarted = nil
+        closeOpenTools("the session ended")
         clearStream()
         if wasBusy {
             summary = "Session ended unexpectedly"
@@ -222,9 +267,35 @@ final class AgentSession {
     // MARK: user actions
 
     /// `attachments` are files (images included) the agent should look at with this message.
+    ///
+    /// Typing ahead is allowed: a message sent while a turn is running goes straight down stdin,
+    /// and the CLI folds it into that turn at its next step (measured live; see docs/PRESENCE.md). The
+    /// one exception is a permission question, which stops the CLI reading stdin at all: those
+    /// messages wait in `queue`, where the user can still cancel them.
     func send(_ text: String, attachments: [URL] = []) {
+        if pending != nil, cwd != nil {
+            queue.append(QueuedMessage(text: text, attachments: attachments))
+            onChange?()
+            return
+        }
+        deliver(text, attachments: attachments)
+    }
+
+    /// Drops a queued message before it goes.
+    func cancelQueued(_ id: UUID) {
+        guard queue.cancel(id) else { return }
+        onChange?()
+    }
+
+    private func flushQueue() {
+        for message in queue.take() { deliver(message.text, attachments: message.attachments) }
+    }
+
+    private func deliver(_ text: String, attachments: [URL]) {
         let names = attachments.map(\.lastPathComponent)
-        transcript.append(.init(kind: .user, text: names.isEmpty ? text : "\(text) [\(names.joined(separator: ", "))]"))
+        let running = turnStarted != nil
+        transcript.append(.init(kind: .user, text: names.isEmpty ? text : "\(text) [\(names.joined(separator: ", "))]",
+                                midTurn: running))
         if cwd == nil {
             set(.thinking)
             return
@@ -240,11 +311,14 @@ final class AgentSession {
         inFlight = message
         replayed = false
         interrupted = false
-        turnSummary = nil
-        lastAssistantText = ""
-        if turnStarted == nil { turnStarted = Date() }
+        if !running {
+            turnSummary = nil
+            lastAssistantText = ""
+            turnStarted = Date()
+        }
         write(message)
-        set(.thinking)
+        // Mid-turn the agent is still doing whatever it was doing; do not fake a new pose.
+        if running { onChange?() } else { set(.thinking) }
     }
 
     func answerPermission(allow: Bool) {
@@ -257,6 +331,7 @@ final class AgentSession {
                "response": ["subtype": "success", "request_id": req.requestID, "response": decision]])
         note(allow ? "Allowed \(req.tool)." : "Denied \(req.tool).")
         set(allow ? .working : .thinking, bubble: allow ? req.tool : "")
+        flushQueue() // the CLI can read stdin again
     }
 
     func interrupt() {
@@ -264,6 +339,9 @@ final class AgentSession {
         interrupted = true
         write(["type": "control_request", "request_id": UUID().uuidString, "request": ["subtype": "interrupt"]])
     }
+
+    /// Tests drive the engine with protocol events recorded from a live session.
+    func feed(_ event: [String: Any]) { handle(event) }
 
     /// Demo and tests drive the avatar directly.
     func simulate(_ state: AgentState, text: String = "", log: TranscriptEntry.Kind? = nil, countsAsUnread: Bool = false) {
@@ -299,12 +377,19 @@ final class AgentSession {
         let nested = event["parent_tool_use_id"] is String // a subagent's traffic, not this conversation's
         switch event["type"] as? String {
         case "system":
-            guard event["subtype"] as? String == "init" else { return }
-            awaitingResume = false
-            inFlight = nil
-            model = event["model"] as? String ?? model
-            sessionID = event["session_id"] as? String ?? sessionID
-            onChange?()
+            switch event["subtype"] as? String {
+            case "init":
+                awaitingResume = false
+                inFlight = nil
+                model = event["model"] as? String ?? model
+                sessionID = event["session_id"] as? String ?? sessionID
+                onChange?()
+            case "thinking_tokens":
+                guard !nested else { return }
+                thinkingTokens(event)
+            default:
+                return
+            }
         case "stream_event":
             inFlight = nil
             guard !nested, let inner = event["event"] as? [String: Any] else { return }
@@ -323,7 +408,7 @@ final class AgentSession {
                     if !nested { set(.thinking) }
                 case "text":
                     guard !nested else { continue }
-                    clearStream()
+                    clearText()
                     let (text, line) = Self.splitSummary(block["text"] as? String ?? "")
                     if let line { turnSummary = line }
                     guard !text.isEmpty else { continue }
@@ -333,22 +418,36 @@ final class AgentSession {
                     set(.talking, bubble: text)
                 case "tool_use":
                     let name = block["name"] as? String ?? "tool"
+                    let id = block["id"] as? String ?? UUID().uuidString
                     let input = block["input"] as? [String: Any] ?? [:]
                     if !nested { _ = plan.toolUse(id: block["id"] as? String, name: name, input: input) }
-                    let brief = Self.brief(input)
-                    transcript.append(.init(kind: .tool, text: brief.isEmpty ? name : "\(name): \(brief)"))
-                    if pending == nil { set(.working, bubble: name) }
+                    // The row is usually already on screen from the stream; this only settles its
+                    // argument, now that the whole input has arrived.
+                    if let entry = toolEntry[id], transcript.indices.contains(entry) {
+                        transcript[entry].tool?.argument = Self.argument(input)
+                    } else {
+                        transcript.append(.init(kind: .tool, text: name,
+                                                tool: ToolRow(id: id, name: name, argument: Self.argument(input))))
+                        toolEntry[id] = transcript.count - 1
+                        openTools.append(id)
+                    }
+                    if pending == nil { pose(.working, bubble: name) }
                 default:
                     break
                 }
             }
         case "user":
             // Tool results coming back: the agent is reading them.
-            if !nested, let result = event["tool_use_result"] as? [String: Any],
-               let blocks = (event["message"] as? [String: Any])?["content"] as? [[String: Any]],
-               let id = blocks.first(where: { $0["type"] as? String == "tool_result" })?["tool_use_id"] as? String,
-               plan.toolResult(id: id, result: result), state != .working { onChange?() }
-            if state == .working { set(.thinking) }
+            guard !nested else { return }
+            let result = event["tool_use_result"]
+            let content = (event["message"] as? [String: Any])?["content"] as? [[String: Any]] ?? []
+            for block in content where block["type"] as? String == "tool_result" {
+                guard let id = block["tool_use_id"] as? String else { continue }
+                if let dictionary = result as? [String: Any] { _ = plan.toolResult(id: id, result: dictionary) }
+                finishTool(id: id, result: result, failed: block["is_error"] as? Bool ?? false,
+                           content: block["content"] as? String ?? "")
+            }
+            if state == .working, runningTool == nil { set(.thinking) } else { publish(now: true) }
         case "control_request":
             control(event)
         case "control_cancel_request":
@@ -356,6 +455,7 @@ final class AgentSession {
             guard let req = pending, req.requestID == event["request_id"] as? String else { return }
             pending = nil
             set(.thinking)
+            flushQueue()
         case "result":
             if awaitingResume, event["is_error"] as? Bool == true { return startFresh() }
             finish(event)
@@ -404,6 +504,7 @@ final class AgentSession {
         }
         lastTurnFailed = interrupted || failed
         turnsCompleted += 1
+        closeOpenTools(interrupted ? "interrupted" : "did not finish")
         interrupted = false
         pending = nil
         inFlight = nil
@@ -412,51 +513,166 @@ final class AgentSession {
         if let remark { transcript.append(.init(kind: .system, text: remark)) }
         set(.done, bubble: summary)
         refreshChangedFiles()
+        flushQueue() // anything held behind a permission question that never got answered
     }
 
     // MARK: streaming
 
+    /// The partial messages are where presence comes from: thinking, the tool call forming, and
+    /// the reply, each shown the instant its first token arrives rather than at the end of the block.
     private func stream(_ event: [String: Any]) {
+        let index = event["index"] as? Int ?? 0
         switch event["type"] as? String {
         case "content_block_start":
-            if (event["content_block"] as? [String: Any])?["type"] as? String == "text" { streamRaw = "" }
+            let block = event["content_block"] as? [String: Any] ?? [:]
+            switch block["type"] as? String {
+            case "text":
+                streamRaw = ""
+                blocks[index] = .text
+                publish(now: true)
+            case "thinking":
+                thinkingText = ""
+                thinkingTokens = 0
+                transcript.append(.init(kind: .thinking, text: ""))
+                let entry = transcript.count - 1
+                blocks[index] = .thinking(entry: entry)
+                openThinking = entry
+                pose(.thinking)
+                publish(now: true)
+            case "tool_use":
+                let id = block["id"] as? String ?? UUID().uuidString
+                let name = block["name"] as? String ?? "tool"
+                transcript.append(.init(kind: .tool, text: name, tool: ToolRow(id: id, name: name)))
+                let entry = transcript.count - 1
+                blocks[index] = .tool(entry: entry, id: id)
+                toolJSON[index] = ""
+                toolEntry[id] = entry
+                openTools.append(id)
+                if pending == nil { pose(.working, bubble: name) }
+                publish(now: true)
+            default:
+                break
+            }
         case "content_block_delta":
             let delta = event["delta"] as? [String: Any] ?? [:]
-            guard delta["type"] as? String == "text_delta", let text = delta["text"] as? String else { return }
-            streamRaw += text
-            flushStream()
+            switch delta["type"] as? String {
+            case "text_delta":
+                guard let text = delta["text"] as? String else { return }
+                let first = streamingText.isEmpty
+                streamRaw += text
+                publish(now: first) // the first token of a block never waits for the next tick
+            case "thinking_delta":
+                // `thinking` is usually empty: the text is withheld and only its size is reported.
+                if let text = delta["thinking"] as? String { thinkingText += text }
+                if let tokens = delta["estimated_tokens"] as? Int { thinkingTokens = max(thinkingTokens, tokens) }
+                guard case let .thinking(entry)? = blocks[index], transcript.indices.contains(entry) else { return }
+                let first = transcript[entry].text.isEmpty
+                transcript[entry].text = thinkingText
+                transcript[entry].thinkingTokens = thinkingTokens
+                publish(now: first)
+            case "input_json_delta":
+                guard let part = delta["partial_json"] as? String,
+                      case let .tool(entry, _)? = blocks[index], transcript.indices.contains(entry) else { return }
+                let json = (toolJSON[index] ?? "") + part
+                toolJSON[index] = json
+                let argument = PartialJSON.argument(json)
+                guard transcript[entry].tool?.argument != argument else { return }
+                let first = transcript[entry].tool?.argument.isEmpty ?? true
+                transcript[entry].tool?.argument = argument
+                publish(now: first)
+            default:
+                break
+            }
+        case "content_block_stop":
+            if case .thinking? = blocks[index] {
+                thinkingText = ""
+                openThinking = nil
+                publish(now: true)
+            }
+            blocks[index] = nil
         default:
             break
         }
     }
 
-    /// Publishes the streamed text at most `1 / streamInterval` times a second.
-    private func flushStream() {
-        let now = ProcessInfo.processInfo.systemUptime
-        let wait = lastStreamFlush + Self.streamInterval - now
+    /// Reads the estimate the CLI sends alongside a thinking block, so a long silent think still
+    /// shows something moving.
+    private func thinkingTokens(_ event: [String: Any]) {
+        guard let tokens = event["estimated_tokens"] as? Int, let entry = openThinking,
+              transcript.indices.contains(entry), tokens > thinkingTokens else { return }
+        thinkingTokens = tokens
+        transcript[entry].thinkingTokens = tokens
+        publish()
+    }
+
+    /// Marks a tool row finished with whatever its result carried.
+    private func finishTool(id: String, result: Any?, failed: Bool, content: String) {
+        guard let entry = toolEntry[id], transcript.indices.contains(entry),
+              let name = transcript[entry].tool?.name else { return }
+        transcript[entry].tool?.status = failed ? .failed : .ok
+        transcript[entry].tool?.detail = ToolReport.summarise(name: name, result: result, failed: failed, content: content)
+        openTools.removeAll { $0 == id }
+    }
+
+    /// A turn that ended while calls were still open: say so rather than leave them spinning.
+    private func closeOpenTools(_ reason: String) {
+        for id in openTools {
+            guard let entry = toolEntry[id], transcript.indices.contains(entry) else { continue }
+            transcript[entry].tool?.status = .failed
+            transcript[entry].tool?.detail = reason
+        }
+        openTools = []
+    }
+
+    /// Publishes streamed changes at most `1 / streamInterval` times a second. `now` forces the
+    /// change out at once, which is what every block's first token does: nothing visible ever
+    /// waits for the next tick.
+    private func publish(now immediate: Bool = false) {
+        let clock = ProcessInfo.processInfo.systemUptime
+        let wait = immediate ? 0 : lastStreamFlush + Self.streamInterval - clock
         if wait > 0 {
             guard !streamFlushScheduled else { return }
             streamFlushScheduled = true
             DispatchQueue.main.asyncAfter(deadline: .now() + wait) { [weak self] in
                 guard let self else { return }
                 self.streamFlushScheduled = false
-                if !self.streamRaw.isEmpty { self.flushStream() }
+                self.publish(now: true)
             }
             return
         }
-        lastStreamFlush = now
+        lastStreamFlush = clock
         let visible = Self.hidingSummary(streamRaw)
-        guard visible != streamingText else { return }
-        streamingText = visible
-        state = .talking
-        bubble = visible
-        since = 0
+        if visible != streamingText {
+            streamingText = visible
+            if !visible.isEmpty {
+                state = .talking
+                bubble = visible
+                since = 0
+            }
+        }
         onChange?()
+    }
+
+    /// Sets the avatar's pose without disturbing anything else; the poses come thick and fast now.
+    private func pose(_ new: AgentState, bubble text: String = "") {
+        guard state != new || (!text.isEmpty && bubble != text) else { return }
+        set(new, bubble: text)
+    }
+
+    /// Just the message text: the thinking and tool blocks around it may still be open.
+    private func clearText() {
+        streamRaw = ""
+        streamingText = ""
     }
 
     private func clearStream() {
         streamRaw = ""
         streamingText = ""
+        thinkingText = ""
+        thinkingTokens = 0
+        openThinking = nil
+        blocks = [:]
+        toolJSON = [:]
     }
 
     // MARK: summary
@@ -548,6 +764,14 @@ final class AgentSession {
                 self.onChange?()
             }
         }
+    }
+
+    /// The whole argument for a tool row; the log shortens it for display.
+    private static func argument(_ input: [String: Any]) -> String {
+        for key in PartialJSON.keys {
+            if let value = input[key] as? String { return value }
+        }
+        return ""
     }
 
     private static func brief(_ input: [String: Any]) -> String {

@@ -31,15 +31,25 @@ final class LogView: NSScrollView, NSTextViewDelegate {
     private let storage = NSTextStorage()
     private let text: NSTextView
 
+    /// `nook.showThinking`: the agent's reasoning appears in the log as it arrives. On by default,
+    /// because seeing it is the difference between waiting and watching.
+    static let showThinkingKey = "nook.showThinking"
+    static var showsThinking: Bool {
+        UserDefaults.standard.object(forKey: showThinkingKey) as? Bool ?? true
+    }
+
     private var sessionID: UUID?
-    private var consumed = 0            // transcript entries already folded into `items`
     private var items: [LogItem] = []
     private var lengths: [Int] = []     // characters each item occupies in `storage`
     private var expanded = Set<Int>()
     private var streaming = ""
     private var streamLength = 0
+    /// Turns the spinners on the rows that are still running; nil whenever nothing is running.
+    private var spinnerTimer: Timer?
+    private var spinner = Activity.frames[0]
     /// Item index -> the shell run's `version` as last drawn. A shell block changes in place
-    /// (output arriving, a button pressed), so it is redrawn when its version moves.
+    /// (output arriving, a button pressed) without the item itself differing, so it is redrawn
+    /// when its version moves.
     private var shellVersions: [Int: Int] = [:]
 
     /// A button inside a shell result block was clicked.
@@ -71,29 +81,34 @@ final class LogView: NSScrollView, NSTextViewDelegate {
     required init?(coder: NSCoder) { fatalError("not used") }
 
     func show(_ session: AgentSession) {
-        let transcript = session.transcript
-        if session.id != sessionID || transcript.count < consumed {
+        if session.id != sessionID {
             reset()
             sessionID = session.id
         }
-        var firstChanged = items.count
-        if transcript.count > consumed {
-            firstChanged = LogModel.append(transcript[consumed...], at: consumed, to: &items)
-            consumed = transcript.count
-        }
+        let wanted = LogModel.group(session.transcript, openThinking: session.openThinking,
+                                    showThinking: Self.showsThinking)
+        let stream = Self.tail(session.streamingText, after: wanted.last)
+        var changed = LogModel.firstChange(from: items, to: wanted)
+        items = wanted
+        // A shell block is the same item while its output grows, so its version says when to redraw.
         for (index, drawn) in shellVersions {
-            guard items.indices.contains(index), case let .message(.shell(run), _) = items[index], run.version != drawn else { continue }
-            firstChanged = min(firstChanged, index)
+            guard items.indices.contains(index), case let .message(.shell(run), _) = items[index],
+                  run.version != drawn else { continue }
+            changed = min(changed ?? index, index)
         }
-        let stream = Self.tail(session.streamingText, after: items.last)
-        guard firstChanged < items.count || stream != streaming else { return }
+        syncSpinner()
+        guard changed != nil || stream != streaming else { return }
+        redraw(from: changed ?? items.count, stream: stream)
+    }
 
+    /// Rewrites the storage from `firstChanged` on, leaving everything before it untouched.
+    private func redraw(from firstChanged: Int, stream: String) {
         let pinned = isAtBottom
         storage.beginEditing()
         let keep = lengths.prefix(firstChanged).reduce(0, +)
         if firstChanged < items.count {
             storage.deleteCharacters(in: NSRange(location: keep, length: storage.length - keep))
-            lengths.removeSubrange(firstChanged...)
+            lengths.removeSubrange(min(firstChanged, lengths.count)...)
             shellVersions = shellVersions.filter { $0.key < firstChanged }
             for (index, item) in zip(firstChanged..., items[firstChanged...]) {
                 let rendered = render(item)
@@ -113,9 +128,48 @@ final class LogView: NSScrollView, NSTextViewDelegate {
 
     /// Forgets everything rendered, so the next `show` draws the log afresh (a new session, or a new text size).
     func reset() {
-        (sessionID, consumed, items, lengths, expanded, streaming, streamLength) = (nil, 0, [], [], [], "", 0)
+        (sessionID, items, lengths, expanded, streaming, streamLength) = (nil, [], [], [], "", 0)
         shellVersions = [:]
         storage.setAttributedString(NSAttributedString())
+        syncSpinner()
+    }
+
+    // MARK: spinners
+
+    /// One timer, only while something is actually running, and it redraws just the items that
+    /// hold a running row: the rest of the log is never touched.
+    private func syncSpinner() {
+        let live = items.contains { $0.isLive }
+        if live, spinnerTimer == nil, window != nil {
+            let timer = Timer(timeInterval: Activity.interval, repeats: true) { [weak self] _ in self?.turnSpinner() }
+            timer.tolerance = Activity.interval / 4
+            RunLoop.main.add(timer, forMode: .common)
+            spinnerTimer = timer
+        } else if !live || window == nil {
+            spinnerTimer?.invalidate()
+            spinnerTimer = nil
+        }
+    }
+
+    private func turnSpinner() {
+        spinner = Activity.frame(at: ProcessInfo.processInfo.systemUptime)
+        guard let first = items.firstIndex(where: { $0.isLive }) else { return syncSpinner() }
+        let pinned = isAtBottom
+        storage.beginEditing()
+        for index in first..<items.count where items[index].isLive {
+            let rendered = render(items[index])
+            let offset = lengths.prefix(index).reduce(0, +)
+            guard index < lengths.count, offset + lengths[index] <= storage.length else { continue }
+            storage.replaceCharacters(in: NSRange(location: offset, length: lengths[index]), with: rendered)
+            lengths[index] = rendered.length
+        }
+        storage.endEditing()
+        if pinned { scrollToBottom() }
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        syncSpinner()
     }
 
     /// The engine may append the finished entry a beat before it clears `streamingText`;
@@ -127,8 +181,7 @@ final class LogView: NSScrollView, NSTextViewDelegate {
     }
 
     private func render(_ item: LogItem) -> NSAttributedString {
-        if case let .tools(start, _) = item { return LogRenderer.render(item, expanded: expanded.contains(start)) }
-        return LogRenderer.render(item, expanded: false)
+        LogRenderer.render(item, expanded: item.key.map(expanded.contains) ?? false, spinner: spinner)
     }
 
     // MARK: scrolling
@@ -175,7 +228,7 @@ final class LogView: NSScrollView, NSTextViewDelegate {
     }
 
     private func toggle(_ start: Int) {
-        guard let index = items.firstIndex(where: { if case .tools(start, _) = $0 { return true } else { return false } }) else { return }
+        guard let index = items.firstIndex(where: { $0.key == start }), index < lengths.count else { return }
         expanded.formSymmetricDifference([start])
         let rendered = render(items[index])
         let offset = lengths.prefix(index).reduce(0, +)
