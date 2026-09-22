@@ -1,5 +1,15 @@
 import AppKit
 
+/// Proof that a line of text was typed by the user into the chat input. Its initialiser is
+/// private to this file — the input box's own submit path — so nothing else in the app can make
+/// one: not the agent's replies, a queued task, a scheduled prompt, a voice transcript or a
+/// notification reply. `ShellConsole.handle` takes only this, which is how "only what the user
+/// typed can start a shell command" is enforced by the compiler rather than by convention.
+struct TypedLine {
+    let text: String
+    fileprivate init(_ text: String) { self.text = text }
+}
+
 /// Floating input bar at the bottom of the screen with the active agent's log above it.
 /// Non-activating but key-capable: typing works without taking focus from the user's editor.
 final class ChatPanel: NSPanel {
@@ -109,7 +119,12 @@ final class ChatPanel: NSPanel {
 
         input.onSubmit = { [weak self] in self?.submit() }
         input.onClose = { [weak self] in self?.controller?.deactivate() }
-        input.onRecall = { [weak self] in self?.session?.transcript.last { $0.kind == .user }?.text }
+        input.onRecall = { [weak self] in
+            guard let session = self?.session else { return nil }
+            return ShellRecall.last(transcript: session.transcript,
+                                    history: session.cwd.map { ShellHistory.commands(for: $0) } ?? [])
+        }
+        log.onShell = { [weak self] in self?.perform($0) }
         input.textView.onFiles = { [weak self] in self?.attach($0) }
         stop.target = self
         stop.action = #selector(stopTapped)
@@ -247,6 +262,10 @@ final class ChatPanel: NSPanel {
 
     func present(_ session: AgentSession, on screen: NSScreen) {
         transition += 1
+        if !UserDefaults.standard.bool(forKey: ShellPrefs.hintShown) {
+            UserDefaults.standard.set(true, forKey: ShellPrefs.hintShown)
+            session.remark("Start a line with ! to run a shell command here — Nook runs it, the agent never sees it.")
+        }
         let target = placement(on: screen, height: savedSize.height)
         render(session)
         if isVisible, alphaValue == 1 {
@@ -332,7 +351,9 @@ final class ChatPanel: NSPanel {
             permissionDetail.toolTip = full
         }
         permissionRow.isHidden = session.pending == nil
-        stop.isHidden = !session.state.busy
+        let console = ShellConsole.console(for: session)
+        stop.isHidden = !session.state.busy && !console.isRunning
+        stop.toolTip = console.isRunning ? "Stop the command (⌘.)" : "Stop (⌘.)"
 
         log.show(session)
         showChips(ReplyChips.titles(for: ReplyChips.situation(busy: session.state.busy, transcript: session.transcript)))
@@ -412,6 +433,21 @@ final class ChatPanel: NSPanel {
     private func submit() {
         var text = input.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty || !attachments.isEmpty else { return }
+        if let session {
+            switch ShellConsole.console(for: session).handle(TypedLine(text)) {
+            case .ran, .nothing, .noFolder:
+                // Attachments stay staged: they were meant for the agent, not for the shell.
+                input.text = ""
+                log.scrollToBottom()
+                return
+            case .busy:
+                NSSound.beep() // the command stays in the input, ready to send again
+                log.scrollToBottom()
+                return
+            case let .message(unescaped):
+                text = unescaped
+            }
+        }
         if text.isEmpty { text = "Please look at " + attachments.map(\.lastPathComponent).joined(separator: ", ") + "." }
         let files = attachments
         input.text = ""
@@ -421,8 +457,25 @@ final class ChatPanel: NSPanel {
         controller?.send(text, attachments: files)
     }
 
+    /// ⌘. and the Stop button mean "stop what is running now": a shell command wins while one is
+    /// running, because it is the newer, shorter-lived thing; with none, the agent's turn is interrupted.
     @objc private func stopTapped() {
+        if let session, ShellConsole.console(for: session).stop() { return }
         if session?.state.busy == true { session?.interrupt() }
+    }
+
+    /// A button inside a shell result block.
+    private func perform(_ action: ShellAction) {
+        guard let session else { return }
+        let console = ShellConsole.console(for: session)
+        switch action.kind {
+        case .stop: console.stop()
+        case .share: console.share(action.run)
+        case .expand: action.run.toggleExpanded()
+        case .autoShare: console.toggleAutoShare()
+        }
+        action.run.bump()
+        render(session)
     }
 
     @objc private func allowTapped() { controller?.answerActive(allow: true) }

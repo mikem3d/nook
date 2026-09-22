@@ -54,6 +54,8 @@ enum LogRenderer {
             out.append(line("— " + text, font: TextSize.font(.secondary), color: .secondaryLabelColor, spacing: TextSize.metric(6)))
         case let .message(.tool, text):
             out.append(toolLine(text, indent: 0))
+        case let .message(.shell(run), _):
+            out.append(ShellBlock.render(run))
         case let .tools(start, lines):
             if lines.count <= LogModel.inlineToolLimit {
                 lines.forEach { out.append(toolLine($0, indent: 0)) }
