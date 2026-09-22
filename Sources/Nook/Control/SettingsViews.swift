@@ -20,6 +20,8 @@ enum SettingsKeys {
     static let overlayClick = FocusOverlay.clickKey
     /// Read by the engine when an agent starts (AgentSession's private `Prefs.alwaysAsk`).
     static let alwaysAsk = "nook.alwaysAsk"
+    /// Whether the chat log shows the agent's reasoning as it arrives (see LogView).
+    static let showThinking = LogView.showThinkingKey
     static let voiceEnabled = "nook.voice.enabled"
     /// A locale identifier such as "en-GB"; empty follows the system.
     static let voiceLocale = "nook.voice.locale"
@@ -39,6 +41,7 @@ struct GeneralSettings: View {
     @AppStorage(SettingsKeys.overlayOpacity) private var overlayOpacity = FocusOverlay.defaultOpacity
     @AppStorage(SettingsKeys.overlayClick) private var overlayClick = true
     @AppStorage(SettingsKeys.alwaysAsk) private var alwaysAsk = false
+    @AppStorage(SettingsKeys.showThinking) private var showThinking = true
     @State private var launchAtLogin = LoginItem.isEnabled
     @State private var loginError = ""
 
@@ -77,6 +80,11 @@ struct GeneralSettings: View {
                 Toggle("Always ask before Bash, Write and Edit, even if my Claude Code settings allow them", isOn: $alwaysAsk)
             } footer: {
                 Text("Normally Nook follows your Claude Code permission settings, so a tool you have allowed there runs without a question. With this on, every command and file change waits for your answer. Applies to agents you start from now on.").settingsNote()
+            }
+            Section {
+                Toggle("Show the agent's thinking in the conversation", isOn: $showThinking)
+            } footer: {
+                Text("While the agent reasons, the log shows it as it happens and folds it away once the reply starts. Turn this off for a quieter conversation.").settingsNote()
             }
             Section {
                 Picker("Text size", selection: $textSize) {

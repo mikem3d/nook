@@ -25,6 +25,8 @@ final class ChatPanel: NSPanel {
     private let contextBar = ContextBar()
     private let summary = NSTextField(labelWithString: "")
     private let log = LogView()
+    private let activity = ActivityLine()
+    private let queueRow = NSStackView()
     private let permissionRow = NSStackView()
     private let permissionTool = NSTextField(labelWithString: "")
     private let permissionDetail = NSTextField(labelWithString: "")
@@ -101,7 +103,7 @@ final class ChatPanel: NSPanel {
         permissionRow.distribution = .fill
         permissionRow.isHidden = true
 
-        for row in [chipRow, attachmentRow] {
+        for row in [chipRow, attachmentRow, queueRow] {
             row.distribution = .gravityAreas
             row.setClippingResistancePriority(.defaultLow, for: .horizontal)
             row.isHidden = true
@@ -121,7 +123,7 @@ final class ChatPanel: NSPanel {
         inputRow.alignment = .centerY
         inputRow.distribution = .fill
 
-        let rows: [NSView] = [top, contextBar, summary, log, permissionRow, chipRow, attachmentRow]
+        let rows: [NSView] = [top, contextBar, summary, log, activity, queueRow, permissionRow, chipRow, attachmentRow]
         column.setViews(rows, in: .top)
         column.orientation = .vertical
         column.alignment = .leading
@@ -185,6 +187,9 @@ final class ChatPanel: NSPanel {
         permissionRow.spacing = size.metric(8)
         chipRow.spacing = size.metric(7)
         attachmentRow.spacing = size.metric(7)
+        queueRow.spacing = size.metric(7)
+        column.setCustomSpacing(size.metric(4), after: log)
+        activity.applyTextSize()
         input.applyTextSize()
     }
 
@@ -266,6 +271,7 @@ final class ChatPanel: NSPanel {
         makeKey()
         makeFirstResponder(input.textView)
         log.scrollToBottom()
+        activity.show(session)
         syncTimer()
     }
 
@@ -275,6 +281,7 @@ final class ChatPanel: NSPanel {
         transition += 1
         let token = transition
         if let session { drafts[session.id] = input.text }
+        activity.stop()
         syncTimer(hiding: true)
         let sink: CGFloat = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0 : 8
         NSAnimationContext.runAnimationGroup({ context in
@@ -335,6 +342,8 @@ final class ChatPanel: NSPanel {
         stop.isHidden = !session.state.busy
 
         log.show(session)
+        activity.show(isVisible ? session : nil)
+        showQueue(session)
         showChips(ReplyChips.titles(for: ReplyChips.situation(busy: session.state.busy, transcript: session.transcript)))
         syncTimer()
     }
@@ -385,6 +394,20 @@ final class ChatPanel: NSPanel {
         let chips = titles.map { title in PillButton(title: title) { [weak self] in self?.controller?.send(title) } }
         chipRow.setViews(chips, in: .leading)
         chipRow.isHidden = titles.isEmpty
+    }
+
+    /// Messages held behind a permission question, each with a ✕ that takes it back.
+    private func showQueue(_ session: AgentSession) {
+        let pills = session.queue.items.map { message -> PillButton in
+            let pill = PillButton(title: "queued: " + Activity.shorten(message.text, limit: 38) + "  ✕") { [weak session, weak self] in
+                session?.cancelQueued(message.id)
+                if let session { self?.render(session) }
+            }
+            pill.toolTip = "\(message.text)\nWaiting until you answer the permission question. Click to cancel."
+            return pill
+        }
+        queueRow.setViews(pills, in: .leading)
+        queueRow.isHidden = pills.isEmpty
     }
 
     fileprivate func attach(_ urls: [URL]) {

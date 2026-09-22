@@ -96,29 +96,52 @@ final class LogModelTests: XCTestCase {
         spec.map { TranscriptEntry(kind: $0.0, text: $0.1) }
     }
 
+    private func row(_ name: String, id: String? = nil) -> ToolRow { ToolRow(id: id ?? name, name: name, status: .ok) }
+
     func testGroupsConsecutiveTools() {
         let items = LogModel.group(entries([(.user, "hi"), (.tool, "a"), (.tool, "b"), (.assistant, "ok"), (.tool, "c")]))
         XCTAssertEqual(items, [
-            .message(.user, "hi"), .tools(start: 1, lines: ["a", "b"]), .message(.assistant, "ok"), .tools(start: 4, lines: ["c"]),
+            .message(.user, "hi"), .tools(start: 1, rows: [row("a", id: "1"), row("b", id: "2")]),
+            .message(.assistant, "ok"), .tools(start: 4, rows: [row("c", id: "4")]),
         ])
     }
 
-    func testIncrementalAppendMatchesFullGrouping() {
+    /// The log redraws from the first item that differs, so a growing tool run re-renders one item
+    /// and a new message re-renders none of what came before it.
+    func testFirstChangeFindsTheOneItemThatMoved() {
         let all = entries([(.user, "go")] + (0..<20).map { (.tool, "t\($0)") } + [(.assistant, "done")])
-        var items: [LogItem] = []
-        var changes: [Int] = []
-        for cut in [0, 1, 5, 21] {
-            let next = [1, 5, 21, 22][changes.count]
-            changes.append(LogModel.append(all[cut..<next], at: cut, to: &items))
-        }
-        XCTAssertEqual(items, LogModel.group(all))
-        // user appended at 0; tool run created at 1; run at 1 grows (re-render it); assistant appended at 2.
-        XCTAssertEqual(changes, [0, 1, 1, 2])
-        XCTAssertEqual(items.count, 3)
+        let early = LogModel.group(Array(all.prefix(5)))
+        let later = LogModel.group(Array(all.prefix(6)))
+        XCTAssertEqual(LogModel.firstChange(from: early, to: later), 1) // the run grew
+        XCTAssertEqual(LogModel.firstChange(from: later, to: LogModel.group(all)), 1)
+        XCTAssertNil(LogModel.firstChange(from: later, to: later))
+        let full = LogModel.group(all)
+        XCTAssertEqual(LogModel.firstChange(from: full, to: full + [.message(.system, "x")]), full.count)
+        XCTAssertEqual(full.count, 3)
+    }
+
+    func testThinkingIsAnItemOfItsOwnAndCanBeHidden() {
+        var spec = entries([(.user, "go")])
+        spec.append(TranscriptEntry(kind: .thinking, text: "let me look", thinkingTokens: 40))
+        spec += entries([(.assistant, "done")])
+        XCTAssertEqual(LogModel.group(spec, openThinking: 1), [
+            .message(.user, "go"), .thinking(start: 1, text: "let me look", tokens: 40, live: true),
+            .message(.assistant, "done"),
+        ])
+        XCTAssertEqual(LogModel.group(spec, showThinking: false), [.message(.user, "go"), .message(.assistant, "done")])
+    }
+
+    func testMidTurnMessageSaysWhenItWillBeRead() {
+        let typed = [TranscriptEntry(kind: .user, text: "also check the tests", midTurn: true)]
+        XCTAssertEqual(LogModel.group(typed), [
+            .message(.user, "also check the tests"),
+            .message(.system, "sent mid-turn; the agent reads it at its next step"),
+        ])
     }
 
     func testToolBurstCollapsesAndExpands() {
-        let burst = LogItem.tools(start: 1, lines: (0..<20).map { "Bash: step \($0)" })
+        let rows = (0..<20).map { ToolRow(id: "\($0)", name: "Bash", argument: "step \($0)", status: .ok, detail: "1 line") }
+        let burst = LogItem.tools(start: 1, rows: rows)
         let collapsed = LogRenderer.render(burst, expanded: false)
         XCTAssertTrue(collapsed.string.hasPrefix("⚙ 20 tool calls ▸"))
         XCTAssertTrue(collapsed.string.contains("step 19"))
@@ -127,11 +150,39 @@ final class LogModelTests: XCTestCase {
 
         let expanded = LogRenderer.render(burst, expanded: true)
         XCTAssertTrue(expanded.string.hasPrefix("⚙ 20 tool calls ▾\n"))
-        XCTAssertEqual(expanded.string.components(separatedBy: "⚙ Bash").count - 1, 20)
+        XCTAssertEqual(expanded.string.components(separatedBy: "✓ Bash").count - 1, 20)
 
-        let short = LogRenderer.render(.tools(start: 0, lines: ["Read: a", "Read: b"]), expanded: false)
-        XCTAssertEqual(short.string, "⚙ Read: a\n⚙ Read: b\n\n")
+        let short = LogRenderer.render(.tools(start: 0, rows: [row("Read: a"), row("Read: b")]), expanded: false)
+        XCTAssertEqual(short.string, "✓ Read: a\n✓ Read: b\n\n")
         XCTAssertNil(short.attribute(.nookToggle, at: 0, effectiveRange: nil))
+    }
+
+    /// A long burst may fold, but never over the call that is running right now.
+    func testCollapsedBurstStillShowsTheRunningCall() {
+        var rows = (0..<8).map { ToolRow(id: "\($0)", name: "Read", argument: "f\($0)", status: .ok, detail: "3 lines") }
+        rows.insert(ToolRow(id: "live", name: "Bash", argument: "npm test", status: .running), at: 4)
+        let text = LogRenderer.render(.tools(start: 0, rows: rows), expanded: false, spinner: "⠹").string
+        XCTAssertTrue(text.contains("⠹ Bash  npm test"))
+        XCTAssertFalse(text.contains("f7"))
+    }
+
+    func testThinkingRendersDimAndFoldsAway() {
+        let live = LogRenderer.render(.thinking(start: 2, text: "weighing options", tokens: 120, live: true), expanded: false, spinner: "⠙")
+        XCTAssertTrue(live.string.hasPrefix("⠙ Thinking…"))
+        XCTAssertTrue(live.string.contains("120 tokens"))
+        XCTAssertTrue(live.string.contains("weighing options"))
+
+        let done = LogRenderer.render(.thinking(start: 2, text: "weighing options", tokens: 120, live: false), expanded: false)
+        XCTAssertTrue(done.string.hasPrefix("✲ Thought · 120 tokens  ▸"))
+        XCTAssertFalse(done.string.contains("weighing options"))
+        XCTAssertEqual(done.attribute(.nookToggle, at: 0, effectiveRange: nil) as? Int, 2)
+        XCTAssertTrue(LogRenderer.render(.thinking(start: 2, text: "weighing options", tokens: 120, live: false), expanded: true)
+            .string.contains("weighing options"))
+
+        // The text is usually withheld; the count carries the line on its own and nothing expands.
+        let withheld = LogRenderer.render(.thinking(start: 0, text: "", tokens: 240, live: false), expanded: false)
+        XCTAssertEqual(withheld.string, "✲ Thought · 240 tokens\n\n")
+        XCTAssertNil(withheld.attribute(.nookToggle, at: 0, effectiveRange: nil))
     }
 
     func testStreamingLooksLikeTheFinalEntry() {
@@ -196,12 +247,12 @@ final class LogViewTests: XCTestCase {
         // Expanding the group in place keeps later items intact.
         let toggle = (text.string as NSString).range(of: "⚙ 8 tool calls")
         XCTAssertTrue(view.textView(text, clickedOnLink: Markdown.actionURL, at: toggle.location))
-        XCTAssertTrue(text.string.contains("⚙ 8 tool calls ▾\n⚙ Bash: step 0\n"))
+        XCTAssertTrue(text.string.contains("⚙ 8 tool calls ▾\n✓ Bash: step 0\n"))
         XCTAssertTrue(text.string.hasSuffix("ok\n\n\n"))
         session.simulate(.working, text: "Read: x", log: .tool)
         view.show(session)
-        XCTAssertTrue(text.string.hasSuffix("⚙ Read: x\n\n"))
-        XCTAssertTrue(text.string.contains("⚙ Bash: step 7\n"))
+        XCTAssertTrue(text.string.hasSuffix("✓ Read: x\n\n"))
+        XCTAssertTrue(text.string.contains("✓ Bash: step 7\n"))
     }
 }
 
