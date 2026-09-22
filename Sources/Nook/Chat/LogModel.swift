@@ -80,6 +80,8 @@ enum LogRenderer {
             out.append(line(text, font: TextSize.font(.body, weight: .semibold), color: .controlAccentColor, spacing: TextSize.metric(8)))
         case let .message(.system, text):
             out.append(line("— " + text, font: TextSize.font(.secondary), color: .secondaryLabelColor, spacing: TextSize.metric(6)))
+        case let .message(.shell(run), _):
+            out.append(ShellBlock.render(run))
         case let .message(_, text):
             out.append(line("— " + text, font: TextSize.font(.secondary), color: .secondaryLabelColor, spacing: TextSize.metric(6)))
         case let .thinking(start, text, tokens, live):

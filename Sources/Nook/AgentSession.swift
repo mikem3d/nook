@@ -7,7 +7,12 @@ enum AgentState: String {
 }
 
 struct TranscriptEntry {
-    enum Kind { case user, assistant, tool, system, thinking }
+    enum Kind: Equatable {
+        case user, assistant, tool, system, thinking
+        /// A command the user typed into the chat input and Nook ran itself. The payload is a
+        /// reference type because the block fills in as the command runs.
+        case shell(ShellRun)
+    }
     var kind: Kind
     var text: String
     /// On a `.tool` entry: that call's live state, from the moment it starts forming.
@@ -779,6 +784,14 @@ final class AgentSession {
     /// A system line in the transcript from outside the engine: automatic sends name their source
     /// here, so the log always says what was not typed by the user.
     func remark(_ text: String) { note(text) }
+
+    /// Puts a command Nook ran itself into the log. It is Nook's own work, not the agent's:
+    /// nothing of it is written to the CLI unless the user shares the result, which goes
+    /// through `send` like any other message they typed.
+    func logShell(_ run: ShellRun) {
+        transcript.append(.init(kind: .shell(run), text: run.command))
+        onChange?()
+    }
 
     private func note(_ text: String) {
         transcript.append(.init(kind: .system, text: text))

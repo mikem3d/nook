@@ -47,6 +47,13 @@ final class LogView: NSScrollView, NSTextViewDelegate {
     /// Turns the spinners on the rows that are still running; nil whenever nothing is running.
     private var spinnerTimer: Timer?
     private var spinner = Activity.frames[0]
+    /// Item index -> the shell run's `version` as last drawn. A shell block changes in place
+    /// (output arriving, a button pressed) without the item itself differing, so it is redrawn
+    /// when its version moves.
+    private var shellVersions: [Int: Int] = [:]
+
+    /// A button inside a shell result block was clicked.
+    var onShell: ((ShellAction) -> Void)?
 
     init() {
         let manager = CodeLayoutManager()
@@ -81,8 +88,14 @@ final class LogView: NSScrollView, NSTextViewDelegate {
         let wanted = LogModel.group(session.transcript, openThinking: session.openThinking,
                                     showThinking: Self.showsThinking)
         let stream = Self.tail(session.streamingText, after: wanted.last)
-        let changed = LogModel.firstChange(from: items, to: wanted)
+        var changed = LogModel.firstChange(from: items, to: wanted)
         items = wanted
+        // A shell block is the same item while its output grows, so its version says when to redraw.
+        for (index, drawn) in shellVersions {
+            guard items.indices.contains(index), case let .message(.shell(run), _) = items[index],
+                  run.version != drawn else { continue }
+            changed = min(changed ?? index, index)
+        }
         syncSpinner()
         guard changed != nil || stream != streaming else { return }
         redraw(from: changed ?? items.count, stream: stream)
@@ -96,10 +109,12 @@ final class LogView: NSScrollView, NSTextViewDelegate {
         if firstChanged < items.count {
             storage.deleteCharacters(in: NSRange(location: keep, length: storage.length - keep))
             lengths.removeSubrange(min(firstChanged, lengths.count)...)
-            for item in items[firstChanged...] {
+            shellVersions = shellVersions.filter { $0.key < firstChanged }
+            for (index, item) in zip(firstChanged..., items[firstChanged...]) {
                 let rendered = render(item)
                 storage.append(rendered)
                 lengths.append(rendered.length)
+                if case let .message(.shell(run), _) = item { shellVersions[index] = run.version }
             }
         } else {
             storage.deleteCharacters(in: NSRange(location: storage.length - streamLength, length: streamLength))
@@ -114,6 +129,7 @@ final class LogView: NSScrollView, NSTextViewDelegate {
     /// Forgets everything rendered, so the next `show` draws the log afresh (a new session, or a new text size).
     func reset() {
         (sessionID, items, lengths, expanded, streaming, streamLength) = (nil, [], [], [], "", 0)
+        shellVersions = [:]
         storage.setAttributedString(NSAttributedString())
         syncSpinner()
     }
@@ -191,6 +207,10 @@ final class LogView: NSScrollView, NSTextViewDelegate {
         let attributes = storage.attributes(at: charIndex, effectiveRange: nil)
         if let start = attributes[.nookToggle] as? Int {
             toggle(start)
+            return true
+        }
+        if let action = attributes[.nookShell] as? ShellAction {
+            onShell?(action)
             return true
         }
         if let code = attributes[.nookCopy] as? String {
