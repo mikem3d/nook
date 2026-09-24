@@ -14,43 +14,78 @@ def rock(img, x, y, w, h, seed=1):
     for j in range(y, y + h):
         for i in range(x, x + w):
             n = noise(i // 2, j, seed)          # specks come in pairs: reads as chisel marks, not static
-            if n < 0.07:
+            if n < 0.09:
                 img.set(i, j, "rock_dk")
-            elif n > 0.95:
+            elif n > 0.94:
                 img.set(i, j, "rock_lt")
 
 
 def overlay():
+    """The mountain the chamber is cut out of. The sides are raw rock with a jagged edge; the block
+    under the floor is bedded strata with a seam running through it, so a stack of windows reads as
+    one cliff face cut open rather than as a column of picture frames.
+    """
     f = Img(W, H)
     rock(f, 0, 0, W, H)
-    # the chamber opening, with a roughly hewn edge
+    # Strata under the floor: irregular bands, a copper seam, and loose scree resting on the lip.
+    y, band = FLOOR + 4, 0
+    while y < H:
+        for x in range(W):
+            yy = y + (1 if noise(x // 6, band, 3) < 0.45 else 0) + (1 if noise(x // 11, band, 13) < 0.3 else 0)
+            f.set(x, yy, "rock_dk")
+            if noise(x // 4, band, 5) < 0.3:
+                f.set(x, yy + 1, "ink")
+        y += 4 + int(noise(band, 8, 17) * 4)            # the bands are not evenly bedded
+        band += 1
+    for x in range(W):                          # one thin ore seam, pinched out in places
+        if noise(x // 7, 2, 21) < 0.45:
+            continue
+        y = FLOOR + 9 + int(noise(x // 9, 2, 9) * 3)
+        f.set(x, y, "copper" if noise(x // 4, 3, 9) < 0.25 else "wood_dk")
+        f.set(x, y - 1, "ink")
+    for k in range(26):                         # scree caught on the ledges
+        x, y = int(noise(k, 4, 9) * (W - 3)), FLOOR + 2 + int(noise(k, 5, 9) * (H - FLOOR - 5))
+        f.rect(x, y, 2, 1, "rock_lt")
+    # The chamber opening, with a roughly hewn edge and the dark the rock throws just inside it.
     for y in range(BAR, FLOOR):
-        jag_l = 1 if noise(0, y // 3, 7) < 0.35 else 0
-        jag_r = 1 if noise(1, y // 3, 7) < 0.35 else 0
+        jag_l = int(noise(0, y // 3, 7) * 2.6)
+        jag_r = int(noise(1, y // 3, 7) * 2.6)
         for x in range(SIDE + jag_l, W - SIDE - jag_r):
             f.set(x, y, None)
-        f.set(SIDE + jag_l - 1, y, "rock_dk"); f.set(W - SIDE - jag_r, y, "rock_dk")
+        f.set(SIDE + jag_l - 1, y, "ink"); f.set(W - SIDE - jag_r, y, "ink")
+        f.set(SIDE + jag_l - 2, y, "rock_dk"); f.set(W - SIDE - jag_r + 1, y, "rock_dk")
     for x, y in ((SIDE, BAR), (SIDE + 1, BAR), (SIDE, BAR + 1), (SIDE, FLOOR - 1)):
-        f.set(x, y, "rock"); f.set(W - 1 - x, y, "rock")
-    # header lintel: calm and dark so the title reads
+        f.set(x, y, "rock_dk"); f.set(W - 1 - x, y, "rock_dk")
+    # Header lintel: calm and dark so the title reads, with a cut stone lip under it.
     f.rect(0, 0, W, BAR, "rock_dk"); f.rect(0, 0, W, 1, "rock"); f.rect(0, BAR - 1, W, 1, "ink")
-    # floor slab, then strata down to the seam
-    f.rect(0, FLOOR, W, 1, "stone"); f.rect(0, FLOOR + 1, W, 1, "rock_lt")
+    f.speckle(0, 1, W, BAR - 2, "ink", 0.10, 15, only="rock_dk")
+    # The floor: a cut lip, the shadow it casts, and the grit that has collected on it.
+    f.rect(0, FLOOR, W, 1, "stone"); f.rect(0, FLOOR + 1, W, 1, "rock_lt"); f.rect(0, FLOOR + 2, W, 1, "rock")
     for x in range(W):
-        if noise(x // 5, 0, 3) < 0.5:
-            f.set(x, FLOOR + 7, "rock_dk")
-        if noise(x // 7, 1, 3) < 0.4:
-            f.set(x, FLOOR + 13, "rock_dk")
+        if noise(x // 3, 6, 11) < 0.32:
+            f.set(x, FLOOR, "pale")
+        if noise(x // 2, 7, 11) < 0.25:
+            f.set(x, FLOOR + 1, "stone")
     return f
 
 
 def _ladder(y0, y1, shaft):
-    """Rows y0..y1 of the ladder column; `shaft` is the range of canvas rows that are solid rock."""
+    """Rows y0..y1 of the ladder column; `shaft` is the range of canvas rows that are solid rock.
+
+    The shaft is cut THROUGH rock, so its walls are chiselled and uneven. Rows 0 and H-1 are the
+    seam rows two stacked windows meet on, so their texture is keyed on x alone: whatever the two
+    neighbours are, those rows match pixel for pixel (docs/ART.md, seam rule 2).
+    """
     f = Img(LADDER_W, y1 - y0)
     for y in range(y0, y1):
-        j = y - y0
+        j, seam = y - y0, y in (0, H - 1)
         if y in shaft:
-            f.rect(0, j, LADDER_W, 1, "ink"); f.set(0, j, "rock_dk"); f.set(LADDER_W - 1, j, "rock_dk")
+            f.rect(0, j, LADDER_W, 1, "ink")
+            for side in (0, 1):
+                bite = 0 if seam else int(noise(side, y, 19) * 2.2)
+                for k in range(bite + 1):
+                    x = k if side == 0 else LADDER_W - 1 - k
+                    f.set(x, j, "rock_dk" if k == 0 else "rock")
         for x in (2, 10):
             f.set(x, j, "wood_lt"); f.set(x + 1, j, "wood")
         if y % 4 == 2:
@@ -84,16 +119,27 @@ def sealed_bottom():
 
 
 def _tunnel(open_):
-    """The left-hand piece; the right-hand one is its mirror image."""
+    """The left-hand piece; the right-hand one is its mirror image, which is what makes the two
+    outer columns match at a seam (docs/ART.md, seam rule 3).
+
+    A tunnel is cut through rock, not framed into a wall: rough stone all round the timbering, the
+    bore falling away into black, a rail and a lamp hung just inside.
+    """
     f = Img(TUNNEL_W, TUNNEL_H)
     mouth_top, floor = 6, FLOOR - TUNNEL_TOP
+    rock(f, 0, 0, TUNNEL_W, TUNNEL_H, seed=23)
     if open_:
-        f.rect(0, mouth_top, 7, floor - mouth_top, "rock_dk")
-        f.rect(0, mouth_top, 7, 3, "ink")
+        for j in range(mouth_top, floor):                         # the bore, with an uneven roof
+            bite = int(noise(j, 1, 27) * 2.2)
+            f.rect(0, j, 7, 1, "ink" if j < mouth_top + 3 + bite else "rock_dk")
+        f.rect(0, floor - 4, 7, 1, "ink")                         # what light there is dies here
         f.rect(0, floor, TUNNEL_W, 1, "stone"); f.rect(0, floor + 1, TUNNEL_W, 1, "rock_lt")
         f.rect(0, floor - 1, 7, 1, "wood_dk")                     # cart rail
         f.dots([(1, floor - 2), (5, floor - 2)], "rock_lt")
-        f.rect(3, mouth_top, 1, 2, "rock_lt"); f.rect(2, mouth_top + 2, 3, 3, "yellow"); f.set(3, mouth_top + 3, "white")
+        for k, tone in ((0, "rock_dk"), (2, "warm_dk")):          # arch rings receding into the dark
+            f.rect(k, mouth_top + 3 + k, 1, floor - mouth_top - 4 - k * 2, tone)
+            f.rect(k, mouth_top + 3 + k, 6 - k * 2, 1, tone)
+        f.rect(4, floor - 7, 2, 2, "orange"); f.set(4, floor - 8, "rock_lt"); f.set(5, floor - 7, "yellow")
     else:
         rock(f, 0, mouth_top, 7, floor - mouth_top, seed=5)
         for i in range(7):                                        # two crossed planks
@@ -101,6 +147,8 @@ def _tunnel(open_):
     f.rect(6, mouth_top - 1, 3, floor - mouth_top + 1, "wood"); f.rect(6, mouth_top - 1, 1, floor - mouth_top + 1, "wood_lt")
     f.rect(8, mouth_top - 1, 1, floor - mouth_top + 1, "wood_dk")
     f.rect(0, 2, TUNNEL_W, 4, "wood"); f.rect(0, 2, TUNNEL_W, 1, "wood_lt"); f.rect(0, 5, TUNNEL_W, 1, "wood_dk")
+    f.rect(0, floor + 2, TUNNEL_W, TUNNEL_H - floor - 2, "rock_dk")
+    f.rect(0, 0, TUNNEL_W, 2, "rock_dk")
     return f
 
 

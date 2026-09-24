@@ -15,17 +15,27 @@ def _rgb(h):
 
 
 # The shared palette of the dwarf mine theme. Order is the order written to theme.json.
+#
+# It is cut as RAMPS, because the mine is lit by a few small fires in a lot of dark and every
+# surface has to be able to travel from "deep shadow" to "right next to the flame" (see mine.py):
+#   cool rock  ink -> rock_dk -> rock -> rock_lt -> stone -> pale -> white
+#   warm rock  ink -> warm_dk -> warm -> warm_lt -> sand  -> cream -> white   (rock under firelight)
+#   timber     ink -> wood_dk -> wood -> wood_lt -> sand  -> cream -> white
+# The two rock ramps share their ends, so a wall can cross from lamplight into the dark without
+# leaving the palette. Everything else is an object colour: ore, flame, glass, cloth, skin.
 HEX = {
-    "ink": "1a1a29", "rock_dk": "2b2a3a", "rock": "44425a", "rock_lt": "63607a", "stone": "8f8ca0",
-    "pale": "c9c6d4", "white": "f4f1e6",
-    "wood_dk": "4a2f24", "wood": "7a4d30", "wood_lt": "a8713f", "sand": "d9a766", "cream": "f0d9a0",
+    "ink": "14131c", "rock_dk": "242231", "rock": "393649", "rock_lt": "565165", "stone": "827c93",
+    "pale": "b8b2c2", "white": "f4f1e6",
+    "warm_dk": "342734", "warm": "55404a", "warm_lt": "86675f",
+    "wood_dk": "3d2a1f", "wood": "6b4529", "wood_lt": "a8713f", "sand": "d9a766", "cream": "f0d9a0",
+    "copper": "bf6a3c",
     "skin": "e8b088", "skin_dk": "b97a5c",
     "red_dk": "8a2b32", "red": "d0453c", "orange": "ee8a3a", "yellow": "f7cf4f",
     "green_dk": "2f5d43", "green": "4f9a5a", "green_lt": "9bd46a",
     "blue_dk": "2c3f78", "blue": "4a7ac8", "sky": "8fd0ee", "teal": "3fa6a0",
     "purple_dk": "4b2d6b", "purple": "8a52a8", "pink": "e58bb0",
 }
-assert len(HEX) <= 32
+assert len(HEX) <= 32, len(HEX)
 PAL = {name: _rgb(h) for name, h in HEX.items()}
 _ALLOWED = set(PAL.values())
 

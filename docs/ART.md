@@ -28,6 +28,11 @@ orb art: a plain disc; no portrait: the head of the first character frame; no bg
 - True pixel grid: one art pixel = one PNG pixel. No anti-aliasing, no gradients, no sub-pixel edges.
 - ONE shared palette per theme, at most 32 colours, listed in `theme.json` `palette` ("rrggbb").
   Every opaque pixel of every file must be one of them. `sheet.py validate` enforces it.
+  The dwarf mine cuts its 32 as RAMPS, because the mine is a lot of dark with a few small fires in
+  it and every surface has to travel from deep shadow to right beside the flame:
+  cool rock `ink rock_dk rock rock_lt stone pale white`, warm rock (the same stone under firelight)
+  `ink warm_dk warm warm_lt sand cream white`, timber `ink wood_dk wood wood_lt sand cream white`.
+  The rest are object colours: ore, flame, glass, cloth, skin.
 - Hard 1 px dark outline on the character and the portrait, none required elsewhere.
 - PNG, RGBA. Alpha is fully on or fully off.
 - Positions in `theme.json` are the sprite's BOTTOM-LEFT, in canvas pixels from the canvas
@@ -38,6 +43,7 @@ orb art: a plain disc; no portrait: the head of the first character frame; no bg
 | What | Where (x from left, rows from top) |
 |---|---|
 | Header lintel | rows 0..10, part of `frame.png`. Keep it dark and calm: the title is white text on it. |
+| Ceiling | rows 11..36 of the scene. Rock overhead, dark and quiet: the speech bubble sits on it. |
 | Side rock | x 0..5 and 186..191 |
 | Floor | row 90 is the floor surface; rows 90..107 are rock. Feet stand at y=18 from the bottom. |
 | Chamber interior | x 6..185, rows 11..89 |
@@ -53,7 +59,10 @@ Zones a scene must respect:
   lowest 6 px of the character are hidden.
 - x 63..84 and x 118..134, rows 54..75: the hotspots (task board, calendar), either side of the character.
 - x 136..180: the scene's own feature (forge, oven, still, bunks).
-- Upper right, x 40..188, rows 13..58: keep calm, the speech bubble covers it.
+- Upper right, x 40..188, rows 13..58: keep calm, the speech bubble covers it. At 1x the bubble is
+  wider and can reach x 22, so treat the whole band rows 11..55 as bubble territory. Underground
+  that band is the ceiling, so the right answer is also the calm one: dark rock, a beam across it,
+  stalactites in silhouette, and nothing that has to be read. `sheet.py validate` measures it.
 
 ## Frame and connectors
 `frame.overlay` (192x108) is the rock: opaque border, transparent interior. Each edge has an `open`
@@ -98,6 +107,29 @@ bakery (oven glow, bread steam, kneading), distillery (bubbling still, dripping 
 (fizzing flask, stirring), treasury (glinting gold), mushrooms (spores, dripping water), quarters
 (candle, a snoring bunkmate).
 
+### How a dwarf mine chamber is built
+Each chamber is a pocket hewn out of the SAME living rock, so **the rock tones never change from
+scene to scene**. A chamber is told apart by what is in it, by the COLOUR and PLACE of its light,
+and by what its work leaves on the stone: soot at the forge, flour at the oven, verdigris at the
+still, moss in the mushroom farm. Repainting the wall to say "this one is the bakery" is the thing
+this theme is specifically not allowed to do.
+
+`tools/placeholders/mine.py` holds that vocabulary, and every painter works in three beats:
+
+1. **shell** - `hewn()` or `raw()` rock, `ceiling()` overhead, `vein()` and `crack()` through it,
+   `ground()` and `rails()` underfoot, `scree()` piled at the wall base, `timbers()` and `beam()`
+   for the supports, `fitted()` where the dwarves have squared the rock off and BUILT something.
+2. **fittings** - what this chamber is for, painted in flat MATERIAL tones.
+3. **light** - `light(img, sources)` walks every rock and timber pixel, works out how much light
+   reaches it from the chamber's `lamp()`s plus a vignette, and slides it along its ramp: bright and
+   warm beside the fire, mid around the working area, ink in the ceiling and the corners. Both
+   layers go through it; `calm()` then quietens the bubble band. Only AFTER that are the flames,
+   glints, lanterns and glowing things that MAKE the light painted, so they are never dimmed.
+
+Every chamber hangs a lantern at x 26..32, rows 56..67 - the dead strip between the ladder shaft and
+the vitals wall - so the dashboard props and the dwarf's left side stay readable however dark the
+rest of the chamber goes.
+
 ## Character sheet
 `character/sheet.png`: 32x32 frames, 8 columns, one row per animation, facing the viewer, feet on
 the bottom edge of the frame, centred horizontally, never touching the other three edges.
@@ -125,7 +157,7 @@ Rows 0 to 10 are the engine's contract. Adding an animation = add a row and an e
 sheet AND the portrait at load time by exact colour match, so every agent is recognisably someone
 else. The agent's folder path picks the avatar (FNV-1a hash), the same one on every launch.
 - Reserve KEY colours for what varies and use them for nothing else in the sheet or the portrait.
-  Dwarf mine: beard `ee8a3a`/`a8713f`, tunic `4f9a5a`/`2f5d43`, helmet `8f8ca0`/`63607a` (main/shade).
+  Dwarf mine: beard `ee8a3a`/`a8713f`, tunic `4f9a5a`/`2f5d43`, helmet `827c93`/`565165` (main/shade).
 - Swap targets must be in the theme palette. The first avatar has an empty swap: the sheet as drawn.
 
 ## Portrait and orb (minimised window)
@@ -147,12 +179,17 @@ One PNG sheet per prop, states side by side, declared once in `theme.json` `prop
 
 | Name | Placeholder | States | Shows |
 |---|---|---|---|
-| `window` | skylight, 26x20 at [33, 70] | 3: day, dusk, night | Real time of day: day 08 to 17, dusk 06 to 08 and 17 to 20, night otherwise. |
-| `bookshelf` | 30x30 at [32, 18] | 11: 0 to 10 books | Context used, in even steps. Above 85% the engine tints it red; keep it readable under a red wash. |
-| `coinjar` | 10x12 at [35, 48] | 9: empty to full | Session cost on a log scale: empty under $0.01, full at $20. |
-| `clock` | 13x13 at [48, 48] | 8 hand positions, clockwise from twelve | Steps once a second while a turn runs, rests at twelve otherwise. |
-| `papers` | 14x8 at [69, 24], on the bench | 6: 0 to 5 sheets | Uncommitted files; the last state means "5 or more". State 0 is fully transparent. |
+| `window` | daystone, 26x20 at [33, 70] | 3: day, dusk, night | Real time of day: day 08 to 17, dusk 06 to 08 and 17 to 20, night otherwise. |
+| `bookshelf` | ore rack, 30x30 at [32, 18] | 11: 0 to 10 lumps | Context used, in even steps. Above 85% the engine tints it red; keep it readable under a red wash. |
+| `coinjar` | iron pot, 10x12 at [35, 48] | 9: empty to full | Session cost on a log scale: empty under $0.01, full at $20. |
+| `clock` | carved stone dial, 13x13 at [48, 48] | 8 hand positions, clockwise from twelve | Steps once a second while a turn runs, rests at twelve otherwise. |
+| `papers` | parchments, 14x8 at [69, 24], on the bench | 6: 0 to 5 sheets | Uncommitted files; the last state means "5 or more". State 0 is fully transparent. |
 | `hourglass` | 8x10 at [123, 24], on the bench | 4: sand running down | Hidden until a turn passes 5 minutes, then cycles one state a second. |
+
+`window` is a NAME, not a hole in a wall: a theme set underground has no sky to show. The dwarf mine
+draws it as a DAYSTONE, a cluster of crystals growing out of the seam that keeps the hours the way
+the surface does - white and cold at midday, amber at dusk, a dim blue ember at night. Any theme may
+draw whatever tells its own time of day, as long as it keeps three states in that order.
 `states` can be any number of 1 or more; the engine spreads the value over however many you draw.
 
 ## Hotspots: the props that are buttons
@@ -176,8 +213,8 @@ once in `theme.json` `hotspots`, hung per scene through the scene's `hotspots` l
 
 | Id | Placeholder | Levels | News | Shows |
 |---|---|---|---|---|
-| `tasks` | notice board, 22x22 at [63, 32] | 6: 0 to 5 parchments | wax seal, 5x5, top right | Open tasks (the user's queue plus the agent's unfinished plan; 5 means "5 or more"). The seal: something came back, or the plan changed, since the panel was last opened. |
-| `calendar` | wall calendar, 17x18 at [118, 33] | 1 | ribbon, 3x5, off the page's bottom right | Today's date, written by the engine with `digits`. The ribbon: a scheduled prompt runs today, or one was missed. |
+| `tasks` | planks nailed to the rock, 22x22 at [63, 32] | 6: 0 to 5 parchments | wax seal, 5x5, top right | Open tasks (the user's queue plus the agent's unfinished plan; 5 means "5 or more"). The seal: something came back, or the plan changed, since the panel was last opened. |
+| `calendar` | stone almanac tablet, 17x18 at [118, 33] | 1 | ribbon, 3x5, off the tablet's bottom right | Today's date, written by the engine with `digits`. The ribbon: a scheduled prompt runs today, or one was missed. |
 
 Placement rules (`sheet.py validate` and `HotspotTests` enforce them): the hit rectangle stays inside
 the chamber interior and off the header, the ladder column, the tunnel mouths, the dwarf, the vitals
@@ -198,6 +235,9 @@ land on the art grid. Every glyph sits in a 7x11 cell. The bubble (box, clipped 
 - `python3 tools/make_placeholders.py` regenerates the placeholder theme, `theme.json`, the root
   manifest and `tools/art/palettes/dwarfmine.hex`. The palette is a table in
   `tools/placeholders/pixels.py`; saving a pixel outside it fails, so the 32-colour rule holds by construction.
+  The painters live in `tools/placeholders/`: `pixels` (canvas and palette), `layout` (the shared
+  geometry), `mine` (rock, baked lighting and mine fittings), `dwarf`, `frame`, `props`, `hotspots`,
+  `scenes`.
 - `python3 tools/art/sheet.py validate` checks the installed theme: sizes, alpha, palette, colour
   count, feet, drift, seams, orb circle, avatar swaps, hotspot sheets and placement. `--assets set/ --palette name` checks a candidate.
 - `python3 tools/art/preview.py -o out/` writes contact sheet, GIFs, a composite per scene, stacked
