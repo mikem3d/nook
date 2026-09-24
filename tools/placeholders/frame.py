@@ -129,17 +129,27 @@ def _tunnel(open_):
     mouth_top, floor = 6, FLOOR - TUNNEL_TOP
     rock(f, 0, 0, TUNNEL_W, TUNNEL_H, seed=23)
     if open_:
-        for j in range(mouth_top, floor):                         # the bore, with an uneven roof
-            bite = int(noise(j, 1, 27) * 2.2)
-            f.rect(0, j, 7, 1, "ink" if j < mouth_top + 3 + bite else "rock_dk")
-        f.rect(0, floor - 4, 7, 1, "ink")                         # what light there is dies here
+        # A bore, not a doorway: the roof and the floor converge on a vanishing point off the left
+        # edge, three timber sets recede into it, and the far end is lit by the next chamber.
+        def roof(i):
+            return mouth_top + 1 + (6 - i) // 2
+        def road(i):
+            return floor - 1 - (6 - i) // 3
+        for i in range(7):
+            f.rect(i, roof(i), 1, road(i) - roof(i) + 1, "ink")
+            f.set(i, roof(i) - 1, "rock_dk")
+        f.rows(0, roof(0) + 1, [(0, 3)] * (road(0) - roof(0) - 1), "warm_dk")   # daylight of the next lamp
+        f.rows(0, roof(0) + 2, [(0, 2)] * max(road(0) - roof(0) - 3, 1), "warm")
+        f.set(0, roof(0) + 3, "warm_lt"); f.set(1, roof(0) + 3, "warm_lt")
+        for i, tone in ((5, "wood"), (3, "wood_dk"), (1, "rock_dk")):           # the sets, receding
+            f.rect(i, roof(i), 1, road(i) - roof(i) + 1, tone)
+            f.set(i, roof(i), "wood_lt" if tone == "wood" else tone)
+            f.set(i + 1, roof(i), tone)
+        for i in range(7):                                                      # the rail, converging
+            f.set(i, road(i), "wood_dk")
+            f.set(i, road(i) - 1, "rock_lt" if i % 2 else "stone")
         f.rect(0, floor, TUNNEL_W, 1, "stone"); f.rect(0, floor + 1, TUNNEL_W, 1, "rock_lt")
-        f.rect(0, floor - 1, 7, 1, "wood_dk")                     # cart rail
-        f.dots([(1, floor - 2), (5, floor - 2)], "rock_lt")
-        for k, tone in ((0, "rock_dk"), (2, "warm_dk")):          # arch rings receding into the dark
-            f.rect(k, mouth_top + 3 + k, 1, floor - mouth_top - 4 - k * 2, tone)
-            f.rect(k, mouth_top + 3 + k, 6 - k * 2, 1, tone)
-        f.rect(4, floor - 7, 2, 2, "orange"); f.set(4, floor - 8, "rock_lt"); f.set(5, floor - 7, "yellow")
+        f.rect(4, floor - 9, 2, 2, "orange"); f.set(4, floor - 10, "rock_lt"); f.set(5, floor - 9, "yellow")
     else:
         rock(f, 0, mouth_top, 7, floor - mouth_top, seed=5)
         for i in range(7):                                        # two crossed planks

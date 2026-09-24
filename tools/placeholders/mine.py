@@ -275,18 +275,37 @@ def beam(bg, y, x0=0, x1=W, thick=3):
         bg.rect(x, y, 2, thick, "wood_dk")       # pegs
 
 
-def lantern(img, x, y, chain=0, glass="yellow"):
-    """A hanging lantern: chain, iron hood, glazed panes. Paint it AFTER light(): it is a source,
-    so nothing may dim it."""
-    for j in range(chain):
-        img.set(x + 3, y - chain + j, "rock_dk" if j % 2 else "rock_lt")
-    img.rows(x + 1, y, [(2, 1), (1, 3), (0, 5)], "rock_lt")           # the hood
-    img.rect(x, y + 3, 7, 1, "stone")
-    img.rect(x, y + 4, 7, 6, "ink")                                   # the cage
-    img.rect(x + 1, y + 4, 5, 6, glass)
-    img.rect(x + 3, y + 4, 1, 6, "ink"); img.rect(x + 1, y + 6, 5, 1, "ink")
-    img.set(x + 2, y + 5, "white"); img.set(x + 5, y + 8, "white")
-    img.rect(x, y + 10, 7, 1, "rock_lt"); img.rect(x + 2, y + 11, 3, 1, "rock_dk")
+LANTERN = (9, 15)          # the hanging lantern's own size, hook to finial
+
+# The halo a lantern throws on the rock behind it, by the colour of its glass. Warm glass borrows
+# the WARM ramp, cold glass the cool one, so the wall never leaves the shared palette.
+_HALO = {"yellow": ("warm_lt", "warm"), "orange": ("sand", "warm_lt"), "cream": ("warm_lt", "warm"),
+         "sky": ("stone", "rock_lt"), "green_lt": ("stone", "rock_lt"), "teal": ("stone", "rock_lt")}
+
+
+def lantern(img, x, y, chain=0, glass="yellow", halo=True):
+    """A hanging lantern, 9x15: the hook it swings from, an iron hood, four glazed panes and a
+    finial, with the light it throws on the rock behind it. It is the one fitting every chamber
+    has, so at 1x it has to read as a lamp and not as a speck.
+
+    Paint it AFTER light(): it is a source, so nothing may dim it."""
+    if halo:
+        inner, outer = _HALO.get(glass, ("warm_lt", "warm"))
+        glow(img, x + 4, y + 9, 11, inner, outer)
+    for j in range(chain):                                             # the chain it hangs on
+        img.set(x + 4, y - chain + j, "stone" if j % 2 else "rock_dk")
+        img.set(x + 5, y - chain + j, "ink" if j % 2 else "rock_lt")
+    img.set(x + 3, y, "stone"); img.set(x + 5, y, "stone")             # the hook, open in the middle
+    img.rect(x + 3, y + 1, 3, 1, "rock_lt"); img.set(x + 4, y + 2, "stone")
+    img.rows(x + 2, y + 3, [(1, 3), (0, 5)], "rock_dk")                # the hood, wide and dark
+    img.rect(x, y + 5, 9, 2, "rock_dk"); img.rect(x + 1, y + 5, 7, 1, "rock_lt")
+    img.rect(x, y + 7, 9, 6, "ink")                                    # the iron cage
+    img.rect(x + 1, y + 8, 7, 4, glass)                                # and the light inside it
+    img.rect(x + 2, y + 7, 5, 6, glass)
+    img.rect(x + 3, y + 8, 3, 4, "white")
+    img.set(x, y + 7, "rock_dk"); img.set(x + 8, y + 7, "rock_dk")
+    img.rect(x, y + 13, 9, 1, "rock_lt"); img.rect(x + 2, y + 13, 5, 1, "stone")
+    img.rows(x + 3, y + 14, [(0, 3)], "rock_dk")                       # the finial
 
 
 def soot(bg, x, y, w, h, seed, tone="ink", chance=0.16):
