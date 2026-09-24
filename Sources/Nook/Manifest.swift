@@ -95,9 +95,10 @@ final class Art {
     }
 
     /// One texture per state, or nil when the prop is not declared or its sheet will not load.
-    func states(forProp name: String) -> (prop: Theme.Prop, textures: [SKTexture])? {
+    /// `sheet` overrides the theme's artwork with a scene's own dressing of the same prop.
+    func states(forProp name: String, sheet override: String? = nil) -> (prop: Theme.Prop, textures: [SKTexture])? {
         guard let prop = theme.props?.first(where: { $0.name == name }), prop.states > 0, prop.frame.count == 2,
-              prop.position.count == 2, let sheet = try? texture(prop.sheet) else { return nil }
+              prop.position.count == 2, let sheet = try? texture(override ?? prop.sheet) else { return nil }
         return (prop, strip(sheet, count: prop.states))
     }
 

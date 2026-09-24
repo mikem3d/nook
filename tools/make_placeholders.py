@@ -15,9 +15,12 @@ import shutil
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "art"))
+import placement  # noqa: E402
 from placeholders import dwarf, frame, hotspots, props, scenes  # noqa: E402
 from placeholders.layout import W, H, BAR, FLOOR, FEET, LADDER_X, LADDER_W, LADDER_BOTTOM_TOP, TUNNEL_TOP, TUNNEL_H, TUNNEL_W, ORB, bl  # noqa: E402
 from placeholders.pixels import HEX  # noqa: E402
+from placeholders.plans import PLANS  # noqa: E402
 
 REPO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 ASSETS = os.path.join(REPO, "Sources", "Nook", "Assets")
@@ -70,6 +73,16 @@ def main():
         save(sheet, f"props/{name}.png")
     for name, size, states, position, z, _ in props.PROPS:
         prop_defs.append({"name": name, "sheet": f"props/{name}.png", "frame": list(size), "states": states, "position": position, "z": z})
+    prop_size = {p["name"]: (p["frame"][0], p["frame"][1], p["z"]) for p in prop_defs}
+
+    def dressing(name, kit):
+        """The sheet for one chamber's own filling of a shared prop, written once per kit used."""
+        if not kit or kit not in (props.DRESSED.get(name) or {}):
+            return None
+        rel = f"props/{name}_{kit}.png"
+        if not os.path.exists(os.path.join(ROOT, rel)):
+            save(props.one(name, kit), rel)
+        return rel
 
     hotspot_defs = []
     for ident, name, size, levels, paint, hit, position, z, news, number in hotspots.HOTSPOTS:
@@ -82,14 +95,39 @@ def main():
             entry["digits"] = {"sheet": save(hotspots.digits(), "hotspots/digits.png"), "frame": [3, 5], "position": number}
         hotspot_defs.append(entry)
 
+    hit_size = {}
+    for h in hotspot_defs:
+        fw, fh = h["frame"]
+        hx, hy, hw, hh = h.get("hit") or [0, 0, fw, fh]
+        hit_size[h["id"]] = (fw, fh, hx, fh - hy - hh, hw, hh)
+
     scene_defs = []
     for ident, name, paint in scenes.SCENES:
-        bg, fg, ambient, extra = paint()
-        entry = {"id": ident, "name": name, "bg": save(bg, f"scenes/{ident}/bg.png"), "fg": save(fg, f"scenes/{ident}/fg.png"), "feet": list(FEET)}
-        placements = extra.get("props", {})
-        entry["props"] = [{"name": p["name"], "position": placements.get(p["name"], {}).get("position", p["position"]), "z": p["z"]} for p in prop_defs]
+        # The plan is the chamber's floor plan; placement.py is the referee. Anything the plan gets
+        # wrong is moved to the nearest place that breaks no rule, and said out loud.
+        plan = PLANS[ident]
+        places, spots, moves, stuck = placement.resolve(plan.feet, dict(plan.props), dict(plan.spots), prop_size, hit_size)
+        for what, was, now, why in moves:
+            print(f"  {ident}: moved {what} {was} -> {now} ({why})")
+        for msg in stuck:
+            print(f"  {ident}: CANNOT PLACE {msg}")
+        for msg in placement.calm_bubble(places, prop_size):
+            print(f"  {ident}: {msg}")
+
+        bg, fg, ambient, extra = paint(plan)
+        entry = {"id": ident, "name": name, "bg": save(bg, f"scenes/{ident}/bg.png"), "fg": save(fg, f"scenes/{ident}/fg.png"),
+                 "feet": [plan.feet, H - FLOOR]}
+        entry["props"] = []
+        for p in prop_defs:
+            x, y_top = places[p["name"]]
+            place = {"name": p["name"], "position": bl(x, y_top, p["frame"][1]), "z": p["z"]}
+            dressed = dressing(p["name"], plan.kits.get(p["name"]))
+            if dressed:
+                place["sheet"] = dressed
+            entry["props"].append(place)
         moved = extra.get("hotspots", {})
-        entry["hotspots"] = [dict({"id": h["id"], "position": h["position"], "z": h["z"]}, **moved.get(h["id"], {})) for h in hotspot_defs]
+        entry["hotspots"] = [dict({"id": h["id"], "position": bl(*spots[h["id"]], h["frame"][1]), "z": h["z"]},
+                                  **moved.get(h["id"], {})) for h in hotspot_defs]
         entry["ambient"] = []
         for spec, sheet in ambient:
             spec = dict(spec, sheet=save(sheet, f"scenes/{ident}/{spec['name']}.png"))
