@@ -25,6 +25,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import common as C  # noqa: E402
+import placement as PL  # noqa: E402
 
 HEADER_ROWS = 11      # docs/ART.md: the header lintel covers the top 11 px
 MIN_FRAME_PIXELS = 20
@@ -280,6 +281,11 @@ def validate_hotspots(rep: Report, root: Path, man: dict, pal_set):
                 rep.error(where, "hotspot", "hit rectangle crosses the ladder column")
             if y0 < tunnel[0] + tunnel[1] and y1 > tunnel[0] and (x0 < 10 or x1 > cw - 10):
                 rep.error(where, "hotspot", "hit rectangle crosses a tunnel mouth")
+    # The whole floor plan, prop by prop: nothing behind the dwarf, nothing under the bubble,
+    # nothing on top of anything else (placement.py, which is also what the painters lay out with).
+    for scene in man["scenes"]:
+        for msg in PL.from_scene(scene, man):
+            rep.error(scene["id"], "placement", msg)
 
 
 def validate_theme(rep: Report, root: Path, man: dict, pal_set):
