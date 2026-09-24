@@ -43,9 +43,9 @@ final class ChamberNode: SKNode {
         }
 
         // Vital-sign props. Any that the theme does not declare are simply absent.
-        let placements = scene.props ?? art.theme.props?.map { Theme.Placement(name: $0.name, position: $0.position, z: $0.z) } ?? []
+        let placements = scene.props ?? art.theme.props?.map { Theme.Placement(name: $0.name, position: $0.position, z: $0.z, sheet: nil) } ?? []
         for place in placements where place.position.count == 2 {
-            guard let (prop, textures) = art.states(forProp: place.name) else { continue }
+            guard let (prop, textures) = art.states(forProp: place.name, sheet: place.sheet) else { continue }
             let sprite = SKSpriteNode(texture: textures[0], size: CGSize(width: prop.frame[0], height: prop.frame[1]))
             sprite.anchorPoint = .zero
             sprite.position = CGPoint(x: place.position[0], y: place.position[1])

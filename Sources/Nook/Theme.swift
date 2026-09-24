@@ -122,6 +122,9 @@ struct Theme: Decodable {
         let name: String
         let position: [CGFloat]
         let z: CGFloat?
+        /// Replaces the theme prop's sheet, so a chamber can dress a shared prop as its own (the
+        /// same silhouette and the same states, filled with ore, jars or cores). nil: the theme's.
+        let sheet: String?
     }
 
     /// Optional travel: the sprite glides from `position` to `to` in `seconds`, once every `every` seconds.
