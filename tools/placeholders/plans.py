@@ -84,7 +84,7 @@ PLANS = {
     # ceiling and its feature is dead centre with the distiller working to the left of it. The
     # casks are racked far right, away from the firebox; the floor is wet and built up.
     "distillery": _plan(
-        feet=62, bench=(32, 62, 86), ceil=(4, 6), ground=80, lamp=(170, 52),
+        feet=62, bench=(32, 62, 86), ceil=(6, 9), ground=80, lamp=(170, 52),
         props={"window": (30, 14), "clock": (60, 30), "coinjar": (30, 44), "bookshelf": (150, 56),
                "papers": (36, 78), "hourglass": (76, 76)},
         spots={"tasks": (28, 56), "calendar": (118, 58)},

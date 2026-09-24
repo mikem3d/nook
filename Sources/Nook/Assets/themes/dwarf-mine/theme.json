@@ -676,14 +676,14 @@
         {
           "name": "fire",
           "frame": [
-            26,
-            20
+            40,
+            14
           ],
           "frames": 4,
           "fps": 5,
           "position": [
-            122,
-            24
+            138,
+            20
           ],
           "z": 0.5,
           "sheet": "scenes/forge/fire.png"

@@ -124,13 +124,14 @@ def bookshelf(f, i, kit="ore"):
     The chunks are all different shapes, so it still counts under the engine's red overload wash.
     A chamber dresses the same rack with whatever it actually stacks (`kit`)."""
     f.rect(0, 0, 30, 30, "wood"); f.rect(0, 0, 30, 1, "wood_lt"); f.rect(29, 0, 1, 30, "wood_dk")
-    # A boarded back, not a hole in the rock: an empty shelf has to read as an empty SHELF at 1x,
-    # and a dark cavity behind it just reads as a picture frame with nothing in it.
-    f.rect(2, 2, 26, 12, "wood_dk"); f.rect(2, 16, 26, 12, "wood_dk")
-    for y in (2, 6, 10, 16, 20, 24):
-        f.rect(2, y, 26, 3, "wood"); f.rect(2, y, 26, 1, "wood_dk")
-    f.speckle(2, 3, 26, 11, "wood_dk", 0.10, 33, only="wood")
-    f.speckle(2, 17, 26, 11, "wood_dk", 0.10, 35, only="wood")
+    # A LIT recess cut back into the rock, not boards: dark cavities read as an empty picture frame
+    # at 1x, and timber boarding makes the rack a twin of the timber notice board next to it.
+    f.rect(2, 2, 26, 12, "rock_lt"); f.rect(2, 16, 26, 12, "rock_lt")
+    f.speckle(2, 2, 26, 12, "rock", 0.30, 33, only="rock_lt")
+    f.speckle(2, 16, 26, 12, "rock", 0.30, 35, only="rock_lt")
+    for y in (2, 16):                                                  # the shelf above throws a shadow
+        f.rect(2, y, 26, 2, "rock_dk"); f.rect(2, y, 26, 1, "ink")
+        f.rect(2, y, 2, 12, "rock_dk")                                 # and so does the left upright
     f.rect(2, 13, 26, 2, "wood_lt"); f.rect(2, 27, 26, 2, "wood_lt")   # the shelf boards, lit on top
     f.rect(2, 14, 26, 1, "wood_dk"); f.rect(2, 28, 26, 1, "wood_dk")
     f.rect(1, 1, 1, 28, "wood_lt"); f.rect(1, 1, 28, 1, "wood_lt")     # the uprights, catching light

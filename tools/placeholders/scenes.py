@@ -224,25 +224,29 @@ def forge(p):
                veins=((78, 30, 20, "copper"),), heaps=((176, 18, 6),))
     fg, top = Img(W, H), Img(W, H)
     M.beam(bg, 25, 60, 186)
+    # The fire is a low open HEARTH under a hooded chimney breast, never an arched mouth: the
+    # bakery already owns the arch, and a smith works over his fire rather than into it.
     feat = Img(W, H)
-    fitted(feat, 110, 40, 56, FLOOR - 44, 6)                                     # the forge is BUILT
-    feat.rect(126, BAR + 10, 18, 30, "rock_lt"); feat.rect(126, BAR + 10, 1, 30, "stone")
-    feat.rect(143, BAR + 10, 1, 30, "rock_dk")                                   # the chimney breast
-    feat.rows(120, 60, [(8, 20), (4, 28), (2, 32), (1, 34)] + [(0, 36)] * 26, "ink")   # fire mouth
-    feat.rect(110, 84, 56, 2, "rock_dk")
-    M.timbers(feat, 170, 28, 4, FLOOR - 4)
-    M.soot(feat, 104, 46, 68, 40, 43, chance=0.26)
+    fitted(feat, 132, 62, 52, FLOOR - 62, 6)                                     # the hearth is BUILT
+    feat.rect(136, 74, 44, 16, "ink")                                            # the fire bed
+    feat.rect(134, 72, 48, 2, "rock_dk"); feat.rect(134, 72, 48, 1, "stone")
+    feat.rows(130, 30, [(0, 56), (1, 54), (2, 52)], "rock_lt")                   # the hood over it
+    feat.rows(132, 33, [(3, 50), (6, 44), (9, 38), (12, 32), (15, 26)], "rock_dk")
+    feat.rect(146, 38, 22, 24, "rock_dk"); feat.rect(146, 38, 1, 24, "rock_lt")  # the chimney breast
+    feat.rect(184, 62, 2, FLOOR - 62, "rock_dk")
+    M.soot(feat, 128, 46, 58, 30, 43, chance=0.26)
     place(p, bg, feat)
     M.soot(bg, 0, BAR, W, 24, 41, chance=0.32)                                   # smoke across the whole roof
     bg.rect(150, 78, 10, 12, "rock_dk"); bg.rows(148, 74, [(2, 10), (0, 14), (1, 12), (1, 12)], "rock_lt")  # slack tub
     bench(p, fg, "stone")
-    finish(p, bg, fg, lamps(p) + [M.lamp(fx(p, 138), 76, 100, 1.1)], lamp_glass="orange")
-    M.glow(bg, fx(p, 138), 76, 15, "sand", "wood_lt")
-    bg.rows(fx(p, 148, 22), 84, [(0, 22), (0, 22)], "red")
-    top.rows(78, 72, [(0, 24), (2, 22), (4, 18)], "pale"); top.rect(78, 72, 24, 1, "white")       # anvil
-    top.rect(86, 75, 10, 3, "stone"); top.rect(83, 78, 16, 3, "stone"); top.rect(83, 80, 16, 1, "rock_lt")
-    top.rect(84, 71, 10, 1, "orange"); top.rect(90, 71, 4, 1, "yellow")
-    fire = anim("fire", flames(26, 20, seed=2), 5, fx(p, 122, 26), 64)
+    finish(p, bg, fg, lamps(p) + [M.lamp(fx(p, 158), 80, 90, 1.0)], lamp_glass="orange")
+    M.glow(bg, fx(p, 158), 80, 16, "sand", "wood_lt")
+    bg.rows(fx(p, 140, 40), 86, [(0, 40), (0, 40)], "red")
+    top.rows(108, 74, [(0, 18), (2, 14), (4, 10)], "stone")                                        # anvil
+    top.rect(108, 74, 18, 1, "pale"); top.set(125, 74, "white")
+    top.rect(112, 77, 6, 2, "rock_lt"); top.rect(110, 79, 12, 2, "rock_lt"); top.rect(110, 80, 12, 1, "rock_dk")
+    top.rect(112, 73, 8, 1, "orange"); top.rect(115, 73, 3, 1, "yellow")                           # hot iron on it
+    fire = anim("fire", flames(40, 14, seed=2), 5, fx(p, 138, 40), 74)
     fg.blit(top, 0, d(p))
     return bg, fg, [fire], {"animations": {"type": "hammer"}}
 
@@ -289,11 +293,11 @@ def distillery(p):
     """Copper, condensation and a firebox. The still needs the middle of the floor and all the
     headroom in the mountain, so it stands DEAD CENTRE under the highest ceiling of the eight and
     the distiller works to the left of it. The rock behind it is stained where the vapour runs."""
-    bg = shell(p, 41, "hewn", teeth=((40, 15, 8, 3), (90, 14, 6, 2), (116, 16, 9, 3)),
-               veins=((138, 44, 30, "copper"), (30, 24, 20, "copper")), cracks=((74, 26, 28),), heaps=((6, 18, 6),))
+    bg = shell(p, 41, "hewn", teeth=((40, 15, 8, 3), (90, 14, 6, 2), (110, 16, 7, 3)),
+               veins=((152, 56, 26, "copper"), (30, 24, 20, "copper")), cracks=((74, 26, 28),), heaps=((6, 18, 6),))
     fg, top = Img(W, H), Img(W, H)
     M.beam(bg, 21, 6, 146)
-    M.timbers(bg, 140, 24, 4, FLOOR - 4)
+    M.timbers(bg, 140, 44, 4, FLOOR - 4)
     feat = Img(W, H)
     pot = [(9, 8), (6, 14), (4, 18), (2, 22), (1, 24)] + [(0, 26)] * 16 + [(1, 24), (2, 22)]
     feat.rows(92, 58, pot, "copper")

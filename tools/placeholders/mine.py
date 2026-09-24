@@ -254,11 +254,13 @@ def rails(bg, y=None):
 def timbers(bg, x, top, w=4, bottom=FLOOR, lintel=0):
     """A support post, and optionally the lintel it carries. Posts and beams are what stop a
     chamber reading as one flat wall with a hole in it."""
-    bg.rect(x, top, w, bottom - top, "wood")
+    bg.rect(x - 1, top, w + 2, bottom - top, "ink")     # the dark it sits against, so it keeps a
+    bg.rect(x, top, w, bottom - top, "wood")           # silhouette however dark the chamber goes
     bg.rect(x, top, 1, bottom - top, "wood_lt")
     bg.rect(x + w - 1, top, 1, bottom - top, "wood_dk")
     for y in range(top + 5, bottom - 2, 9):      # iron bands
-        bg.rect(x - 1, y, w + 2, 1, "rock_lt")
+        bg.rect(x - 1, y, w + 2, 2, "rock_lt")
+        bg.rect(x - 1, y + 1, w + 2, 1, "stone")
     if lintel:
         bg.rect(x - 2, top - 4, lintel, 4, "wood")
         bg.rect(x - 2, top - 4, lintel, 1, "wood_lt")
