@@ -10,13 +10,17 @@ SLOTS = ((3, 4), (9, 3), (15, 4), (5, 12), (12, 11))
 
 
 def board(f, level):
-    """A notice board; `level` parchments are pinned to it."""
-    f.rect(1, 1, 20, 20, "wood"); f.rect(1, 1, 20, 1, "wood_lt"); f.rect(1, 20, 20, 1, "wood_dk")
-    f.rect(3, 3, 16, 16, "sand")
-    f.dots([(4, 17), (9, 10), (16, 16), (17, 9), (6, 9)], "wood_lt")            # cork grain
+    """Rough planks nailed to the rock, with `level` parchments pinned to them."""
+    f.rect(1, 1, 20, 20, "wood_dk")
+    for y in range(2, 20, 6):                                                  # boards, with the gap between them
+        f.rect(2, y, 18, 5, "wood")
+        f.rect(2, y, 18, 1, "wood_lt")
+        f.rect(2, y + 4, 18, 1, "wood_dk")
+    f.rect(1, 1, 20, 1, "wood_lt"); f.rect(1, 20, 20, 1, "ink")
+    f.dots([(3, 3), (18, 3), (3, 15), (18, 15), (3, 9), (18, 9)], "rock_lt")   # iron nails
     for x, y in SLOTS[:level]:
-        f.rect(x, y, 5, 6, "white"); f.rect(x, y + 5, 5, 1, "pale")
-        f.rect(x + 1, y + 2, 3, 1, "stone"); f.rect(x + 1, y + 4, 2, 1, "stone")
+        f.rect(x, y, 5, 6, "cream"); f.rect(x, y + 5, 5, 1, "sand")
+        f.rect(x + 1, y + 2, 3, 1, "wood"); f.rect(x + 1, y + 4, 2, 1, "wood")
         f.set(x + 2, y, "red")
 
 
@@ -26,11 +30,14 @@ def seal(f, _):
 
 
 def almanac(f, _):
-    """A wall calendar: a red binding with two rings and a page the engine writes today's date on."""
-    f.rect(1, 3, 15, 14, "white"); f.rect(1, 16, 15, 1, "pale"); f.rect(15, 3, 1, 14, "pale")
-    f.rect(1, 3, 15, 4, "red"); f.rect(1, 6, 15, 1, "red_dk")
+    """A stone almanac: a pale limestone tablet hung on two iron pins, its head band carved and
+    stained red, and a face the engine chisels today's date into (so the digits stay dark on pale)."""
+    f.rect(1, 3, 15, 14, "pale"); f.rect(1, 16, 15, 1, "rock_lt"); f.rect(15, 3, 1, 14, "stone")
+    f.rect(1, 3, 15, 1, "white")
+    f.rect(1, 3, 15, 4, "red_dk"); f.rect(1, 6, 15, 1, "ink"); f.rect(2, 4, 13, 1, "red")
+    f.dots([(3, 14), (12, 9), (6, 11)], "stone")                               # chisel wear
     for x in (4, 11):
-        f.rect(x, 1, 2, 4, "stone"); f.set(x, 1, "pale")
+        f.rect(x, 1, 2, 4, "rock_lt"); f.set(x, 1, "stone")
 
 
 def ribbon(f, _):
