@@ -103,5 +103,12 @@ Hold **⌃⌥V**, speak, release to send. Transcription happens on this Mac.
 
 ## Licence
 
-None yet. Until the owner adds a `LICENSE`, this code carries no grant of rights to use, copy or
-modify it.
+Nook is MIT licensed — see [LICENSE](LICENSE).
+
+Two things in this repository are not Nook's to license:
+
+- **Departure Mono**, the pixel font in `Sources/Nook/Assets/fonts/`, is copyright 2022–2024
+  Helena Zhang and licensed under the SIL Open Font License 1.1. Its licence travels with it in
+  `DepartureMono-LICENSE.txt` and must stay with any copy you distribute.
+- **Claude Code** is Anthropic's, and Nook neither includes nor redistributes it. Nook only starts
+  the copy you installed and logged into yourself.
