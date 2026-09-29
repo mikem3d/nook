@@ -1,8 +1,8 @@
 #!/bin/bash
 # Installs or updates Nook from source. Safe to re-run: re-running is how you update.
 #
-#   curl -fsSL https://raw.githubusercontent.com/mikepackdraw/nook/main/scripts/install.sh | bash
-#   git clone https://github.com/mikepackdraw/nook.git && nook/scripts/install.sh
+#   curl -fsSL https://raw.githubusercontent.com/mikem3d/nook/main/scripts/install.sh | bash
+#   git clone https://github.com/mikem3d/nook.git && nook/scripts/install.sh
 #
 # It clones (or pulls) the repo, builds the release configuration, assembles Nook.app with
 # scripts/bundle.sh and moves it into /Applications. It never touches anything outside its own
@@ -17,7 +17,7 @@
 #   NOOK_LAUNCH=0   do not offer to launch at the end
 set -euo pipefail
 
-REPO_URL="${NOOK_REPO:-https://github.com/mikepackdraw/nook.git}"
+REPO_URL="${NOOK_REPO:-https://github.com/mikem3d/nook.git}"
 REF="${NOOK_REF:-main}"
 SRC="${NOOK_SRC:-$HOME/.nook/src}"
 MIN_MACOS=14

@@ -24,7 +24,7 @@ then run `claude` once and sign in. Details: <https://docs.claude.com/en/docs/cl
 
 ## Install
 
-    curl -fsSL https://raw.githubusercontent.com/mikepackdraw/nook/main/scripts/install.sh | bash
+    curl -fsSL https://raw.githubusercontent.com/mikem3d/nook/main/scripts/install.sh | bash
 
 That checks your macOS version, your toolchain and your `claude`, clones the repo to `~/.nook/src`,
 builds the release configuration, assembles `Nook.app` and moves it into `/Applications`
@@ -32,7 +32,7 @@ builds the release configuration, assembles `Nook.app` and moves it into `/Appli
 
 If you would rather read the script before running it — a good habit:
 
-    git clone https://github.com/mikepackdraw/nook.git
+    git clone https://github.com/mikem3d/nook.git
     cd nook
     less scripts/install.sh
     ./scripts/install.sh
@@ -101,7 +101,7 @@ neither problem.
 Run the installer again. It fetches the latest `main`, rebuilds, and replaces the installed app.
 If Nook is running it offers to quit it first.
 
-    curl -fsSL https://raw.githubusercontent.com/mikepackdraw/nook/main/scripts/install.sh | bash
+    curl -fsSL https://raw.githubusercontent.com/mikem3d/nook/main/scripts/install.sh | bash
 
 Your agents, tasks and settings survive an update; they live outside the app bundle.
 

@@ -18,7 +18,7 @@ without keeping several terminals in front of you. Native AppKit and SpriteKit, 
 
 ## Install
 
-    curl -fsSL https://raw.githubusercontent.com/mikepackdraw/nook/main/scripts/install.sh | bash
+    curl -fsSL https://raw.githubusercontent.com/mikem3d/nook/main/scripts/install.sh | bash
 
 This builds from source and installs `Nook.app` into `/Applications`. Re-run it to update; run
 `scripts/uninstall.sh` to remove it. Full walkthrough, permission prompts and troubleshooting:
