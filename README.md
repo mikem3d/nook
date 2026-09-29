@@ -1,8 +1,38 @@
 # Nook
 
-Pixel desktop windows for macOS, one per live Claude Code agent. Native AppKit + SpriteKit,
-built with SwiftPM, macOS 14 or later. Each window runs your own unmodified `claude` in a
-project folder.
+Nook gives each of your Claude Code agents a small 8-bit pixel window docked in a corner of your
+screen. Click one to make it active — the others dim and an input bar with the chat log appears at
+the bottom of the screen. Nook has no API key and no account of its own: each window runs *your*
+unmodified `claude` in a project folder you pick, so you can see what several agents are doing
+without keeping several terminals in front of you. Native AppKit and SpriteKit, no dependencies.
+
+<!-- TODO: screenshot of three docked agent windows with the chat panel open -->
+![Nook](docs/previews/stack-vertical-2x.png)
+
+## Requirements
+
+- macOS 14 or later.
+- **Claude Code installed and logged in** (`claude --version` should work). Without it the windows
+  open and no agent ever answers.
+- A Swift toolchain to build: Xcode, or `xcode-select --install`.
+
+## Install
+
+    curl -fsSL https://raw.githubusercontent.com/mikepackdraw/nook/main/scripts/install.sh | bash
+
+This builds from source and installs `Nook.app` into `/Applications`. Re-run it to update; run
+`scripts/uninstall.sh` to remove it. Full walkthrough, permission prompts and troubleshooting:
+**[docs/INSTALL.md](docs/INSTALL.md)**.
+
+The app is **not notarised**. Building locally sidesteps that entirely — a locally built app is not
+quarantined, so it opens with no Gatekeeper prompt — but a downloaded release zip needs a trip to
+System Settings › Privacy & Security › Open Anyway. Because builds are signed ad hoc, macOS also
+re-asks for microphone, screen recording and notification permission after each update.
+
+Nook has no Dock icon. Look for the menu bar icon and the `+` orb in a screen corner; **Settings…**
+is in the menu bar icon's menu.
+
+---
 
 ## Build and test
 
@@ -46,6 +76,12 @@ again after a rebuild. A stable signing identity avoids that.
 `scripts/notarize.sh` does Developer ID signing, notarisation and stapling for distribution; its
 header explains the one-time setup and the environment variables it needs.
 
+## Continuous integration
+
+`.github/workflows/build.yml` runs `swift build` and `swift test` on every push and pull request.
+`.github/workflows/release.yml` builds, zips and attaches the app bundle to a GitHub Release when a
+`v*` tag is pushed.
+
 ## Voice
 
 Hold **⌃⌥V**, speak, release to send. Transcription happens on this Mac.
@@ -64,3 +100,8 @@ Hold **⌃⌥V**, speak, release to send. Transcription happens on this Mac.
 | `nook.voice.allowNetwork -bool true` | Allow Apple's servers when the language has no on-device model. Off by default. |
 | `nook.voice.locale -string en-GB` | Recognition language; defaults to the system's. |
 | `nook.voice.aliases -dict asche-kron '("ash crown")'` | Extra spoken names for labels the recogniser mangles. |
+
+## Licence
+
+None yet. Until the owner adds a `LICENSE`, this code carries no grant of rights to use, copy or
+modify it.

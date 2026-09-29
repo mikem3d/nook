@@ -1,0 +1,36 @@
+name: build
+
+# Every push and pull request: the package must compile and the tests must pass.
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    # macos-15 is an Apple-silicon image whose default Xcode ships Swift 6, which
+    # Package.swift requires (swift-tools-version: 6.0). macos-14 can lag behind.
+    runs-on: macos-15
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - name: Show toolchain
+        run: |
+          sw_vers
+          xcode-select -p
+          swift --version
+
+      - name: Build
+        run: swift build -v
+
+      - name: Test
+        run: swift test
