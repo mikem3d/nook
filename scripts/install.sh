@@ -49,18 +49,29 @@ ask() {  # ask "question" [y|n] -> 0 for yes
     case "$reply" in [Yy]*) return 0 ;; *) return 1 ;; esac
 }
 
+# Processes whose executable IS this binary. `pgrep -f` would also match any shell or editor
+# with the path in its command line — including this script — so match the process name exactly
+# and then compare the executable `ps` reports.
+nook_pids() {
+    local binary="$1" pid
+    for pid in $(pgrep -x Nook 2>/dev/null || true); do
+        [ "$(ps -o comm= -p "$pid" 2>/dev/null)" = "$binary" ] && printf '%s\n' "$pid"
+    done
+    return 0
+}
+
 # Quit the Nook running from one exact binary path. A quit Apple event is the polite way — it
 # lets Nook save its agent list — but `quit app "Nook"` names an app, not a path, so it is only
 # safe when the copy we care about is the only Nook running. Otherwise, and as the fallback,
 # signal exactly the processes we found.
 quit_nook() {
     local binary="$1" pids all
-    pids="$(pgrep -f "$binary" || true)"
+    pids="$(nook_pids "$binary")"
     [ -n "$pids" ] || return 0
-    all="$(pgrep -f 'Nook.app/Contents/MacOS/Nook' || true)"
+    all="$(pgrep -x Nook 2>/dev/null || true)"
     if [ "$pids" = "$all" ]; then osascript -e 'quit app "Nook"' >/dev/null 2>&1 || true; fi
     for _ in 1 2 3 4 5 6 7 8 9 10; do
-        pgrep -qf "$binary" || return 0
+        [ -n "$(nook_pids "$binary")" ] || return 0
         sleep 0.5
     done
     # shellcheck disable=SC2086  # deliberate word splitting: several pids
@@ -175,7 +186,7 @@ fi
 # bundle.sh deletes and re-signs $SRC/dist/Nook.app. macOS kills a running process whose signed
 # binary is replaced underneath it, so a Nook launched from this checkout (scripts/run.sh does
 # that) must go first, or it dies without saving.
-if pgrep -qf "$SRC/dist/Nook.app/Contents/MacOS/Nook"; then
+if [ -n "$(nook_pids "$SRC/dist/Nook.app/Contents/MacOS/Nook")" ]; then
     step "A Nook launched from this checkout is running"
     info "rebuilding replaces $SRC/dist/Nook.app underneath it, which macOS treats as a kill."
     if ask "Quit it first?" y; then
@@ -217,7 +228,7 @@ fi
 # Only the copy we are about to replace matters; a Nook running from somewhere else is not ours
 # to quit.
 RUNNING="$TARGET/Contents/MacOS/Nook"
-if pgrep -qf "$RUNNING"; then
+if [ -n "$(nook_pids "$RUNNING")" ]; then
     step "Nook is running from $TARGET"
     if ask "Quit it so the new build can replace it?" y; then
         quit_nook "$RUNNING"

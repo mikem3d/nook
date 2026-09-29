@@ -44,14 +44,24 @@ ask() {  # ask "question" [y|n] -> 0 for yes
 
 # Quit the Nook running from one exact binary path. `quit app "Nook"` is the polite way but names
 # an app, not a path, so it is only used when that copy is the only Nook running.
+# Processes whose executable IS this binary. Matching the whole command line would also catch
+# any shell with the path in it, including this script.
+nook_pids() {
+    local binary="$1" pid
+    for pid in $(pgrep -x Nook 2>/dev/null || true); do
+        [ "$(ps -o comm= -p "$pid" 2>/dev/null)" = "$binary" ] && printf '%s\n' "$pid"
+    done
+    return 0
+}
+
 quit_nook() {
     local binary="$1" pids all
-    pids="$(pgrep -f "$binary" || true)"
+    pids="$(nook_pids "$binary")"
     [ -n "$pids" ] || return 0
-    all="$(pgrep -f 'Nook.app/Contents/MacOS/Nook' || true)"
+    all="$(pgrep -x Nook 2>/dev/null || true)"
     if [ "$pids" = "$all" ]; then osascript -e 'quit app "Nook"' >/dev/null 2>&1 || true; fi
     for _ in 1 2 3 4 5 6 7 8 9 10; do
-        pgrep -qf "$binary" || return 0
+        [ -n "$(nook_pids "$binary")" ] || return 0
         sleep 0.5
     done
     # shellcheck disable=SC2086  # deliberate word splitting: several pids
@@ -80,7 +90,7 @@ for app in "${CANDIDATES[@]}"; do
     fi
     found=1
     # Only this copy: a Nook running from a different path is not the one being removed.
-    if pgrep -qf "$app/Contents/MacOS/Nook"; then
+    if [ -n "$(nook_pids "$app/Contents/MacOS/Nook")" ]; then
         step "Quitting Nook"
         quit_nook "$app/Contents/MacOS/Nook"
     fi
