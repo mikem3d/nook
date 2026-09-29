@@ -42,8 +42,6 @@ ask() {  # ask "question" [y|n] -> 0 for yes
     case "$reply" in [Yy]*) return 0 ;; *) return 1 ;; esac
 }
 
-# Quit the Nook running from one exact binary path. `quit app "Nook"` is the polite way but names
-# an app, not a path, so it is only used when that copy is the only Nook running.
 # Processes whose executable IS this binary. Matching the whole command line would also catch
 # any shell with the path in it, including this script.
 nook_pids() {
@@ -54,6 +52,8 @@ nook_pids() {
     return 0
 }
 
+# Quit the Nook running from one exact binary path. `quit app "Nook"` is the polite way but names
+# an app, not a path, so it is only used when that copy is the only Nook running.
 quit_nook() {
     local binary="$1" pids all
     pids="$(nook_pids "$binary")"
