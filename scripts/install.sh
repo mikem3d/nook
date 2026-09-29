@@ -30,11 +30,15 @@ info() { printf '    %s\n' "$*"; }
 note() { printf '%s    %s%s\n' "$dim" "$*" "$reset"; }
 fail() { printf '%snook: %s%s\n' "$red" "$*" "$reset" >&2; exit 1; }
 
-# Prompts read the terminal directly: under `curl … | bash` stdin is the script itself.
+# Prompts go to the terminal, not stdout: under `curl … | bash` stdin is the script itself.
+# With no usable terminal (a CI runner, a pipeline) every question takes its default silently.
+TTY_OK=0
+if { true >/dev/tty; } 2>/dev/null; then TTY_OK=1; fi
+
 ask() {  # ask "question" [y|n] -> 0 for yes
     local prompt="$1" default="${2:-y}" reply hint
     [ "$default" = y ] && hint="[Y/n]" || hint="[y/N]"
-    if [ -n "${NOOK_YES:-}" ] || [ ! -r /dev/tty ]; then
+    if [ -n "${NOOK_YES:-}" ] || [ "$TTY_OK" != 1 ]; then
         info "$prompt $hint $default"
         [ "$default" = y ]
         return
@@ -43,6 +47,27 @@ ask() {  # ask "question" [y|n] -> 0 for yes
     read -r reply < /dev/tty || reply=""
     [ -z "$reply" ] && reply="$default"
     case "$reply" in [Yy]*) return 0 ;; *) return 1 ;; esac
+}
+
+# Quit the Nook running from one exact binary path. A quit Apple event is the polite way — it
+# lets Nook save its agent list — but `quit app "Nook"` names an app, not a path, so it is only
+# safe when the copy we care about is the only Nook running. Otherwise, and as the fallback,
+# signal exactly the processes we found.
+quit_nook() {
+    local binary="$1" pids all
+    pids="$(pgrep -f "$binary" || true)"
+    [ -n "$pids" ] || return 0
+    all="$(pgrep -f 'Nook.app/Contents/MacOS/Nook' || true)"
+    if [ "$pids" = "$all" ]; then osascript -e 'quit app "Nook"' >/dev/null 2>&1 || true; fi
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+        pgrep -qf "$binary" || return 0
+        sleep 0.5
+    done
+    # shellcheck disable=SC2086  # deliberate word splitting: several pids
+    kill -TERM $pids 2>/dev/null || true
+    sleep 1
+    # shellcheck disable=SC2086
+    kill -KILL $pids 2>/dev/null || true
 }
 
 # --- 1. this Mac ------------------------------------------------------------------------------
@@ -147,6 +172,19 @@ fi
 
 # --- 4. build ---------------------------------------------------------------------------------
 
+# bundle.sh deletes and re-signs $SRC/dist/Nook.app. macOS kills a running process whose signed
+# binary is replaced underneath it, so a Nook launched from this checkout (scripts/run.sh does
+# that) must go first, or it dies without saving.
+if pgrep -qf "$SRC/dist/Nook.app/Contents/MacOS/Nook"; then
+    step "A Nook launched from this checkout is running"
+    info "rebuilding replaces $SRC/dist/Nook.app underneath it, which macOS treats as a kill."
+    if ask "Quit it first?" y; then
+        quit_nook "$SRC/dist/Nook.app/Contents/MacOS/Nook"
+    else
+        fail "quit that Nook and run this again."
+    fi
+fi
+
 step "Building Nook (this takes a few minutes the first time)"
 ( cd "$SRC" && swift build -c release )
 
@@ -182,13 +220,7 @@ RUNNING="$TARGET/Contents/MacOS/Nook"
 if pgrep -qf "$RUNNING"; then
     step "Nook is running from $TARGET"
     if ask "Quit it so the new build can replace it?" y; then
-        osascript -e 'quit app "Nook"' >/dev/null 2>&1 || true
-        for _ in 1 2 3 4 5 6 7 8 9 10; do
-            pgrep -qf "$RUNNING" || break
-            sleep 0.5
-        done
-        pgrep -qf "$RUNNING" && pkill -f "$RUNNING" || true
-        sleep 0.5
+        quit_nook "$RUNNING"
     else
         fail "cannot replace $TARGET while it is running. Quit Nook and run this again."
     fi

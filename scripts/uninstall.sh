@@ -23,10 +23,15 @@ step() { printf '%s==>%s %s\n' "$bold" "$reset" "$*"; }
 info() { printf '    %s\n' "$*"; }
 note() { printf '%s    %s%s\n' "$dim" "$*" "$reset"; }
 
+# Prompts go to the terminal, not stdout: under `curl … | bash` stdin is the script itself.
+# With no usable terminal (a CI runner, a pipeline) every question takes its default silently.
+TTY_OK=0
+if { true >/dev/tty; } 2>/dev/null; then TTY_OK=1; fi
+
 ask() {  # ask "question" [y|n] -> 0 for yes
     local prompt="$1" default="${2:-n}" reply hint
     [ "$default" = y ] && hint="[Y/n]" || hint="[y/N]"
-    if [ -n "${NOOK_YES:-}" ] || [ ! -r /dev/tty ]; then
+    if [ -n "${NOOK_YES:-}" ] || [ "$TTY_OK" != 1 ]; then
         info "$prompt $hint $default"
         [ "$default" = y ]
         return
@@ -35,6 +40,25 @@ ask() {  # ask "question" [y|n] -> 0 for yes
     read -r reply < /dev/tty || reply=""
     [ -z "$reply" ] && reply="$default"
     case "$reply" in [Yy]*) return 0 ;; *) return 1 ;; esac
+}
+
+# Quit the Nook running from one exact binary path. `quit app "Nook"` is the polite way but names
+# an app, not a path, so it is only used when that copy is the only Nook running.
+quit_nook() {
+    local binary="$1" pids all
+    pids="$(pgrep -f "$binary" || true)"
+    [ -n "$pids" ] || return 0
+    all="$(pgrep -f 'Nook.app/Contents/MacOS/Nook' || true)"
+    if [ "$pids" = "$all" ]; then osascript -e 'quit app "Nook"' >/dev/null 2>&1 || true; fi
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+        pgrep -qf "$binary" || return 0
+        sleep 0.5
+    done
+    # shellcheck disable=SC2086  # deliberate word splitting: several pids
+    kill -TERM $pids 2>/dev/null || true
+    sleep 1
+    # shellcheck disable=SC2086
+    kill -KILL $pids 2>/dev/null || true
 }
 
 # --- the app ----------------------------------------------------------------------------------
@@ -56,15 +80,9 @@ for app in "${CANDIDATES[@]}"; do
     fi
     found=1
     # Only this copy: a Nook running from a different path is not the one being removed.
-    running="$app/Contents/MacOS/Nook"
-    if pgrep -qf "$running"; then
+    if pgrep -qf "$app/Contents/MacOS/Nook"; then
         step "Quitting Nook"
-        osascript -e 'quit app "Nook"' >/dev/null 2>&1 || true
-        for _ in 1 2 3 4 5 6 7 8 9 10; do
-            pgrep -qf "$running" || break
-            sleep 0.5
-        done
-        pgrep -qf "$running" && pkill -f "$running" || true
+        quit_nook "$app/Contents/MacOS/Nook"
     fi
     step "Removing $app"
     rm -rf "$app"
