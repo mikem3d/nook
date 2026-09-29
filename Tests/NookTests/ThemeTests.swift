@@ -1,3 +1,4 @@
+import AppKit
 import XCTest
 import SpriteKit
 @testable import Nook
@@ -123,7 +124,11 @@ final class ThemeTests: XCTestCase {
         scene.setScene("forge")
         XCTAssertEqual(scene.sceneID, "forge")
         let chambers = Self.nodes(in: scene).compactMap { $0 as? ChamberNode }
-        XCTAssertEqual(chambers.count, 2, "the old chamber stays for the crossfade")
+        // Reduce Motion drops the crossfade and swaps the chamber outright, and a CI runner has it
+        // on, so assert what holds either way: the new chamber is there, and the old one only
+        // lingers while a crossfade is actually running.
+        let crossfading = !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        XCTAssertEqual(chambers.count, crossfading ? 2 : 1, "the old chamber stays only for a crossfade")
         let forge = try XCTUnwrap(chambers.first { $0.spec.id == "forge" })
         XCTAssertFalse(forge.set("papers", 2), "the new chamber already shows the current vitals")
         XCTAssertEqual(art.scene("forge")?.animations?["type"], "hammer")
