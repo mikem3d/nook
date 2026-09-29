@@ -164,7 +164,8 @@ if [ -n "${IN_PLACE:-}" ]; then
     info "$SRC"
 elif [ -d "$SRC/.git" ]; then
     step "Updating $SRC"
-    git -C "$SRC" remote set-url origin "$REPO_URL"
+    # Only repoint the remote when asked; otherwise a checkout installed from a fork keeps it.
+    [ -z "${NOOK_REPO:-}" ] || git -C "$SRC" remote set-url origin "$REPO_URL"
     git -C "$SRC" fetch --quiet origin "$REF"
     # A hard reset is safe here: $SRC is the installer's own directory, not a working copy the
     # user edits. Anyone hacking on Nook runs the script from their own clone instead.
