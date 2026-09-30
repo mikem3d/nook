@@ -52,7 +52,9 @@ final class AgentSession {
     /// Assistant text of the message currently being streamed, empty between messages.
     private(set) var streamingText = ""
     /// One line describing how the last turn ended ("3 files changed, tests pass").
-    private(set) var summary = ""
+    private(set) var summary = "" { didSet { summaryAt = summary.isEmpty ? nil : Date() } }
+    /// When `summary` was written. The window shows it as a recap that fades as it ages.
+    private(set) var summaryAt: Date?
     /// Tokens in the context window, and the window's size.
     private(set) var contextTokens = 0
     private(set) var contextLimit = 200_000
@@ -121,6 +123,8 @@ final class AgentSession {
     private static let streamInterval = 1.0 / 15
 
     private var since = 0.0
+    /// Seconds the current bubble has been up; it outlasts the pose that said it.
+    private var bubbleAge = 0.0
     private var process: Process?
     private var stdin: FileHandle?
 
@@ -343,6 +347,12 @@ final class AgentSession {
     /// Tests drive the engine with protocol events recorded from a live session.
     func feed(_ event: [String: Any]) { handle(event) }
 
+    /// The recap saved by an earlier run, shown until this run ends a turn of its own.
+    func restoreSummary(_ text: String, at date: Date) {
+        summary = text
+        summaryAt = date
+    }
+
     /// Demo and tests drive the avatar directly.
     func simulate(_ state: AgentState, text: String = "", log: TranscriptEntry.Kind? = nil, countsAsUnread: Bool = false) {
         if let log, !text.isEmpty { transcript.append(.init(kind: log, text: text)) }
@@ -350,9 +360,18 @@ final class AgentSession {
         set(state, bubble: text)
     }
 
-    /// State decay: finished and talking poses relax to idle, long idle falls asleep.
+    /// How long a bubble stays up, counted from when it was said: time to read it, pages and all.
+    static func linger(_ text: String) -> Double { 20 + 0.1 * Double(text.count) }
+
+    /// State decay: finished and talking poses relax to idle, long idle falls asleep. What was
+    /// said stays up after the pose relaxes, until it has had time to be read.
     func tick(_ dt: Double) {
         since += dt
+        bubbleAge += dt
+        if state == .idle, !bubble.isEmpty, bubbleAge > Self.linger(bubble) {
+            bubble = ""
+            onChange?()
+        }
         let limit: Double
         switch state {
         case .done: limit = 5
@@ -360,7 +379,7 @@ final class AgentSession {
         case .idle: limit = 300
         default: return
         }
-        if since > limit { set(state == .idle ? .sleeping : .idle) }
+        if since > limit { state == .idle ? set(.sleeping) : set(.idle, bubble: bubble) }
     }
 
     // MARK: protocol
@@ -803,6 +822,7 @@ final class AgentSession {
             FileHandle.standardError.write(Data("[\(label)] \(new.rawValue) \(text.prefix(80)) unread=\(unread) pending=\(pending?.tool ?? "-")\n".utf8))
         }
         state = new
+        if text != bubble { bubbleAge = 0 }
         bubble = text
         since = 0
         onChange?()

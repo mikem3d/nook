@@ -2,6 +2,28 @@ import XCTest
 @testable import Nook
 
 final class SceneLogicTests: XCTestCase {
+    /// A finished turn glows until the window is looked at or the agent starts something new.
+    func testFinishedTurnGlowsUntilSeen() throws {
+        let scene = RoomScene(art: try Art(), roomIndex: 0, title: "p", avatarSeed: nil)
+        scene.show(state: .working, bubble: "", unread: 0)
+        scene.show(state: .done, bubble: "Done.", unread: 1)
+        XCTAssertTrue(scene.celebrating)
+        scene.show(state: .idle, bubble: "", unread: 1)
+        XCTAssertTrue(scene.celebrating, "relaxing to idle unseen keeps the glow")
+        scene.setActive(true)
+        XCTAssertFalse(scene.celebrating)
+
+        scene.show(state: .done, bubble: "Again.", unread: 0)
+        XCTAssertTrue(scene.celebrating)
+        scene.show(state: .idle, bubble: "", unread: 0)
+        XCTAssertFalse(scene.celebrating, "watched it finish, so idle clears it")
+
+        scene.setActive(false)
+        scene.show(state: .done, bubble: "Third.", unread: 0)
+        scene.show(state: .working, bubble: "", unread: 0)
+        XCTAssertFalse(scene.celebrating, "new work clears it")
+    }
+
     func testWrapAndPages() {
         XCTAssertEqual(TextPager.wrap("Fixed the zip lookup. All 42 tests pass.", columns: 16),
                        ["Fixed the zip", "lookup. All 42", "tests pass."])
@@ -12,6 +34,51 @@ final class SceneLogicTests: XCTestCase {
         XCTAssertEqual(pages.count, 4)
         XCTAssertTrue(pages.allSatisfy { $0.count <= 3 && $0.allSatisfy { $0.count <= 20 } })
         XCTAssertEqual(pages.joined().joined(separator: " ").split(separator: " ").count, 40, "paging drops nothing")
+    }
+
+    /// The recap stays fresh for a few minutes, then fades, but never disappears.
+    func testRecapFadesWithAge() {
+        let fresh = RoomScene.recapAlpha(age: 0)
+        XCTAssertEqual(RoomScene.recapAlpha(age: 4 * 60), fresh)
+        XCTAssertLessThan(RoomScene.recapAlpha(age: 3600), fresh)
+        XCTAssertLessThan(RoomScene.recapAlpha(age: 3 * 3600), RoomScene.recapAlpha(age: 3600))
+        XCTAssertEqual(RoomScene.recapAlpha(age: 3 * 3600), RoomScene.recapAlpha(age: 30 * 86400))
+        XCTAssertGreaterThan(RoomScene.recapAlpha(age: 30 * 86400), 0.3)
+    }
+
+    /// A restored window says what it was last doing, with the original time so it is already faded.
+    func testRecapSurvivesARestart() throws {
+        let at = Date(timeIntervalSince1970: 1_790_000_000)
+        let agent = Persistence.SavedAgent(folder: "/tmp", label: "nook", sessionID: "s", corner: 0, order: 0,
+                                           minimised: false, display: nil, scene: nil, recap: "Fixed the log", recapAt: at)
+        let data = try JSONEncoder().encode(Persistence.SavedState(agents: [agent], axes: []))
+        let back = try JSONDecoder().decode(Persistence.SavedState.self, from: data).agents[0]
+        XCTAssertEqual(back.recap, "Fixed the log")
+        XCTAssertEqual(back.recapAt, at)
+
+        let session = AgentSession(label: "nook", cwd: nil)
+        session.restoreSummary("Fixed the log", at: at)
+        XCTAssertEqual(session.summary, "Fixed the log")
+        XCTAssertEqual(session.summaryAt, at)
+
+        // State files written before recaps existed still load.
+        let old = #"{"version":1,"axes":[],"agents":[{"folder":"/tmp","label":"a","corner":0,"order":0,"minimised":false}]}"#
+        let legacy = try JSONDecoder().decode(Persistence.SavedState.self, from: Data(old.utf8)).agents[0]
+        XCTAssertNil(legacy.recap)
+    }
+
+    /// The done pose relaxes after a few seconds; its bubble stays until it has had time to be read.
+    func testBubbleOutlastsThePose() {
+        let session = AgentSession(label: "demo", cwd: nil)
+        let text = "Fixed bubble placement, added done glow and hop"
+        session.simulate(.done, text: text)
+        for _ in 0..<12 { session.tick(0.5) }
+        XCTAssertEqual(session.state, .idle)
+        XCTAssertEqual(session.bubble, text, "still up after the pose relaxed")
+        let rest = AgentSession.linger(text) - 6 + 1
+        for _ in 0..<Int(rest / 0.5) { session.tick(0.5) }
+        XCTAssertEqual(session.bubble, "")
+        XCTAssertEqual(session.state, .idle)
     }
 
     func testVitalLevels() {

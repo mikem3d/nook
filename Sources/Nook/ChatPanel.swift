@@ -251,6 +251,12 @@ final class ChatPanel: NSPanel {
         case ([.command], "0"):
             TextSize.current = .medium
             return true
+        case ([.command], "v"):
+            // Here rather than via the Edit menu, which a non-activating panel can't rely on, and
+            // always into the input: a screenshot pasted while the log has focus is still attached.
+            if firstResponder !== input.textView { makeFirstResponder(input.textView) }
+            input.textView.paste(nil)
+            return true
         case ([.command], "z"):
             if let undo = (firstResponder as? NSTextView)?.undoManager, undo.canUndo { undo.undo() }
             return true

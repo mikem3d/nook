@@ -69,6 +69,9 @@ final class LogView: NSScrollView, NSTextViewDelegate {
         text.drawsBackground = false
         text.textContainerInset = NSSize(width: 0, height: 6)
         text.isVerticallyResizable = true
+        // Built with a zero frame, so without this its max size is zero and it never grows past
+        // the visible height: the rest of the log is clipped with nothing to scroll to.
+        text.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         text.autoresizingMask = [.width]
         text.linkTextAttributes = [.cursor: NSCursor.pointingHand]
         text.delegate = self
@@ -186,7 +189,10 @@ final class LogView: NSScrollView, NSTextViewDelegate {
 
     // MARK: scrolling
 
-    private var isAtBottom: Bool { contentView.bounds.maxY >= text.frame.height - 16 }
+    /// A log not yet laid out counts as pinned, so it opens on the newest line.
+    private var isAtBottom: Bool {
+        contentView.bounds.height == 0 || contentView.bounds.maxY >= text.frame.height - 16
+    }
 
     func scrollToBottom() {
         if let container = text.textContainer { text.layoutManager?.ensureLayout(for: container) }

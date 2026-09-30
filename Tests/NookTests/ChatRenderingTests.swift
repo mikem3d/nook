@@ -292,6 +292,20 @@ final class ChatPanelTests: XCTestCase {
         }
     }
 
+    /// A log longer than the card grows its text view and opens on the newest line; it once
+    /// stopped at the visible height, clipping everything below with nothing to scroll to.
+    func testLongLogScrollsToTheNewestLine() throws {
+        let panel = ChatPanel()
+        let session = AgentSession(label: "demo", cwd: nil)
+        for i in 0..<30 { session.simulate(.done, text: "Paragraph \(i).", log: .assistant) }
+        panel.render(session)
+        panel.contentView?.layoutSubtreeIfNeeded()
+        let log = try XCTUnwrap(Self.find(LogView.self, in: panel.contentView))
+        let text = try XCTUnwrap(log.documentView)
+        XCTAssertGreaterThan(text.frame.height, log.contentView.bounds.height)
+        XCTAssertEqual(log.contentView.bounds.maxY, text.frame.height, accuracy: 1)
+    }
+
     private static func find<T: NSView>(_ type: T.Type, in view: NSView?) -> T? {
         guard let view else { return nil }
         if let match = view as? T { return match }

@@ -15,6 +15,10 @@ final class Persistence: Feature {
         let display: UInt32?
         /// Added later: older state files have none, and the new-agent preference picks one.
         var scene: String?
+        /// The last turn's summary and when it was written, so a restored window still says
+        /// what it was working on. Added later, like `scene`.
+        var recap: String?
+        var recapAt: Date?
     }
 
     struct SavedState: Codable, Equatable {
@@ -79,6 +83,10 @@ final class Persistence: Feature {
             let window = app.addAgent(folder: URL(fileURLWithPath: agent.folder), label: agent.label, resume: agent.sessionID,
                                       corner: Corner(rawValue: agent.corner) ?? .bottomRight, minimised: agent.minimised,
                                       scene: agent.scene)
+            if let recap = agent.recap, !recap.isEmpty, let at = agent.recapAt {
+                window.session.restoreSummary(recap, at: at)
+                window.refresh()
+            }
             if let display = agent.display { app.move(window, toDisplay: display) }
         }
     }
@@ -88,7 +96,8 @@ final class Persistence: Feature {
     static func saved(_ window: AgentWindow, order: Int, in app: AppController) -> SavedAgent {
         SavedAgent(folder: window.session.cwd?.path ?? "", label: window.session.label, sessionID: window.session.sessionID,
                    corner: window.corner.rawValue, order: order, minimised: window.minimised, display: app.display(of: window),
-                   scene: window.scene)
+                   scene: window.scene, recap: window.session.summary.isEmpty ? nil : window.session.summary,
+                   recapAt: window.session.summaryAt)
     }
 
     static func snapshot(of app: AppController) -> SavedState {
@@ -106,7 +115,7 @@ final class Persistence: Feature {
         }
         return all.enumerated().map { order, a in
             SavedAgent(folder: a.folder, label: a.label, sessionID: a.sessionID, corner: a.corner, order: order,
-                       minimised: a.minimised, display: a.display, scene: a.scene)
+                       minimised: a.minimised, display: a.display, scene: a.scene, recap: a.recap, recapAt: a.recapAt)
         }
     }
 

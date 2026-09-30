@@ -12,6 +12,9 @@ final class RoomScene: SKScene {
     private static let titleX: CGFloat = 30
     private static let badgeRight = W - minimiseHit - 2
 
+    /// Where the recap line starts: clear of the ladder that may come up through the left.
+    private static let recapX: CGFloat = 30
+    private static let recapInk = NSColor(red: 0.93, green: 0.90, blue: 0.82, alpha: 1)
     private static let flourishes = ["idle_sip", "idle_stretch", "idle_read", "idle_look"]
     private static let ink = NSColor(red: 0.10, green: 0.10, blue: 0.16, alpha: 1)
     private static let paper = NSColor.white
@@ -32,11 +35,20 @@ final class RoomScene: SKScene {
     private let actor = SKSpriteNode()
     private let dim = SKSpriteNode(color: .black, size: CGSize(width: W, height: H))
     private let border = SKShapeNode()
+    /// Lit when a turn ends: the frame pulses and the character hops until the window is looked at.
+    private let glow = SKShapeNode()
     private let stateDot = SKSpriteNode(color: .gray, size: CGSize(width: 5, height: 5))
     private let badgeBox = SKSpriteNode(color: NSColor(red: 0.92, green: 0.25, blue: 0.22, alpha: 1), size: .zero)
     private let titleText = SKSpriteNode()
     private let badgeText = SKSpriteNode()
     private let bubbleBox = SKSpriteNode()
+    /// The last turn's summary, on the rock under the floor, fading as it ages.
+    private let recapText = SKSpriteNode()
+    /// A one-pixel drop shadow so the line reads against the rock.
+    private let recapShadow = SKSpriteNode()
+    private var recap = ""
+    private var recapAt: Date?
+    private var recapKey = ""
     private let bubbleText = SKSpriteNode()
     /// Two paper-coloured covers hide the text the typewriter has not reached yet:
     /// the rest of the current line, and every line below it.
@@ -49,6 +61,13 @@ final class RoomScene: SKScene {
     private var state: AgentState = .idle
     private var bubble = ""
     private var unread = 0
+    private var active = false
+    /// A turn finished and nobody has looked yet. Set on `.done`, cleared by focusing the window
+    /// or by the agent starting on something new.
+    private(set) var celebrating = false
+    private var celebrateClock = 0.0
+    /// Where the character stands; a hop lifts it off this and puts it back.
+    private var ground: CGFloat = 0
     private var edges = Set<Edge>()
     private var hotspotStates: [String: HotspotState] = [:]
     private var hovered: String?
@@ -158,6 +177,15 @@ final class RoomScene: SKScene {
         border.path = CGPath(rect: CGRect(x: 0.5, y: 0.5, width: Self.W - 1, height: Self.H - 1), transform: nil)
         room.addChild(border)
 
+        glow.strokeColor = Self.color(for: .done)
+        glow.fillColor = .clear
+        glow.lineWidth = 2
+        glow.isAntialiased = false
+        glow.zPosition = 61
+        glow.isHidden = true
+        glow.path = CGPath(rect: CGRect(x: 1, y: 1, width: Self.W - 2, height: Self.H - 2), transform: nil)
+        room.addChild(glow)
+
         titleText.anchorPoint = .zero
         badgeText.anchorPoint = .zero
         badgeText.isHidden = true
@@ -166,7 +194,11 @@ final class RoomScene: SKScene {
         bubbleText.zPosition = 1
         coverLine.zPosition = 2
         coverBelow.zPosition = 2
-        for node in [titleText, badgeText, bubbleBox, bubbleText, coverLine, coverBelow] { ui.addChild(node) }
+        recapText.anchorPoint = .zero
+        recapShadow.anchorPoint = .zero
+        recapShadow.zPosition = -1
+        recapText.addChild(recapShadow)
+        for node in [titleText, badgeText, bubbleBox, bubbleText, coverLine, coverBelow, recapText] { ui.addChild(node) }
 
         NotificationCenter.default.addObserver(self, selector: #selector(occlusionChanged(_:)),
                                                name: NSWindow.didChangeOcclusionStateNotification, object: nil)
@@ -193,6 +225,14 @@ final class RoomScene: SKScene {
 
     func show(state: AgentState, bubble: String, unread: Int) {
         let changed = state != self.state || bubble != self.bubble || unread != self.unread
+        if state != self.state {
+            switch state {
+            case .done: (celebrating, celebrateClock) = (true, 0)
+            case .thinking, .working, .alert: celebrating = false
+            // Watching it finish counts as having seen it once the pose relaxes.
+            default: if active { celebrating = false }
+            }
+        }
         self.state = state
         self.unread = unread
         if bubble != self.bubble {
@@ -207,6 +247,14 @@ final class RoomScene: SKScene {
         stateDot.color = Self.color(for: state)
         orbNode.show(state: state, color: Self.color(for: state))
         if changed { poke() }
+    }
+
+    /// What the agent last finished, so a glance says what this window was working on.
+    func showRecap(_ text: String, at date: Date?) {
+        guard text != recap || date != recapAt else { return }
+        (recap, recapAt) = (text, date)
+        layoutRecap()
+        poke()
     }
 
     /// The agent's vital signs, shown as props in the room. Cheap to call on every refresh:
@@ -244,6 +292,7 @@ final class RoomScene: SKScene {
     func setAutomation(_ on: Bool) {
         guard autoMark.isHidden == on else { return }
         autoMark.isHidden = !on
+        layoutRecap()
         poke()
     }
 
@@ -306,13 +355,45 @@ final class RoomScene: SKScene {
     /// The scene this window shows now; one of `Art.sceneChoices`.
     var sceneID: String { chamber.spec.id }
 
-    func setActive(_ on: Bool) { border.isHidden = !on; poke() }
+    func setActive(_ on: Bool) {
+        active = on
+        if on { celebrating = false }
+        border.isHidden = !on
+        poke()
+    }
 
     private static let sceneFade = 0.25
+    /// From the character's feet to just over its hat, in art pixels.
+    private static let headroom: CGFloat = 29
 
     private func placeActor() {
         let feet = chamber.spec.feet ?? art.theme.character.feet
-        actor.position = CGPoint(x: feet.first ?? Self.W / 2, y: feet.last ?? 0)
+        ground = feet.last ?? 0
+        actor.position = CGPoint(x: feet.first ?? Self.W / 2, y: ground)
+    }
+
+    /// Art pixels off the ground. Hops back to back while the turn has just ended, then a pair
+    /// every few seconds until someone looks.
+    private func hopLift() -> CGFloat {
+        guard celebrating, !still else { return 0 }
+        let (hop, air, height) = (0.6, 0.4, 4.0)
+        let phase = celebrateClock.truncatingRemainder(dividingBy: state == .done ? hop : 4)
+        let within = phase.truncatingRemainder(dividingBy: hop)
+        guard state == .done || phase < hop * 2, within < air else { return 0 }
+        let x = within / air
+        return CGFloat((4 * height * x * (1 - x)).rounded())
+    }
+
+    private func advanceCelebration(_ dt: Double) {
+        glow.isHidden = !celebrating
+        guard celebrating else {
+            if actor.position.y != ground { actor.position.y = ground }
+            return
+        }
+        celebrateClock += dt
+        glow.alpha = still ? 0.9 : 0.55 + 0.45 * CGFloat(0.5 + 0.5 * sin(celebrateClock * 2 * .pi / 1.6))
+        let y = ground + hopLift()
+        if actor.position.y != y { actor.position.y = y }
     }
 
     /// The animation this scene wants in place of a default one: hammering instead of typing, say.
@@ -407,6 +488,47 @@ final class RoomScene: SKScene {
         badgeKey = ""
         refreshBadge()
         layoutBubble()
+        recapKey = ""
+        layoutRecap()
+    }
+
+    /// Recap opacity by age: fresh for a few minutes, then fading, never quite gone.
+    static func recapAlpha(age: TimeInterval) -> CGFloat {
+        let (fresh, faded, full, least): (TimeInterval, TimeInterval, CGFloat, CGFloat) = (5 * 60, 3 * 3600, 0.9, 0.45)
+        guard age > fresh else { return full }
+        let t = min((age - fresh) / (faded - fresh), 1)
+        return full - (full - least) * CGFloat(t)
+    }
+
+    /// One line on the rock under the floor, after the automation marker when it is lit,
+    /// centred in the strip on the font-pixel grid.
+    private func layoutRecap() {
+        guard !minimised, !recap.isEmpty else {
+            recapText.isHidden = true
+            return
+        }
+        let left = autoMark.isHidden ? Self.recapX : Self.recapX + 10
+        let cell = CGFloat(PixelFont.cellW) * fp
+        let columns = Int((Self.W - 6 - left) * scale / cell)
+        let line = recap.replacingOccurrences(of: "\n", with: " ")
+        let shown = line.count > columns ? String(line.prefix(max(columns - 1, 1))) + "…" : line
+        let key = "\(shown)|\(fp)|\(left)|\(scale)"
+        if key != recapKey {
+            recapKey = key
+            setText(recapText, lines: [shown], color: Self.recapInk)
+            setText(recapShadow, lines: [shown], color: .black)
+            recapShadow.position = CGPoint(x: fp, y: -fp)
+            let y = ((ground * scale - recapText.size.height) / 2 / fp).rounded(.down) * fp
+            recapText.position = CGPoint(x: left * scale, y: max(y, 0))
+        }
+        recapText.isHidden = false
+        refreshRecapAlpha()
+    }
+
+    private func refreshRecapAlpha() {
+        guard let recapAt, !recapText.isHidden else { return }
+        let alpha = Self.recapAlpha(age: Date().timeIntervalSince(recapAt))
+        if abs(recapText.alpha - alpha) > 0.005 { recapText.alpha = alpha }
     }
 
     private var headerInset: CGFloat { ((Self.bar * scale / fp - CGFloat(PixelFont.cellH)) / 2).rounded(.down) * fp }
@@ -471,10 +593,12 @@ final class RoomScene: SKScene {
         let (padX, padY): (CGFloat, CGFloat) = (3, 2)
         let width = max((bubbleText.size.width / s).rounded(.up) + padX * 2, 16)
         let height = (bubbleText.size.height / s).rounded(.up) + padY * 2
-        let left = Self.W - 4 - width
-        let top = Self.H - Self.bar - 2
-        // The tail's tip lands just beside the character's head.
-        let tip = actor.position.x + 8
+        // Over the character, the tail's tip just above and right of the head, a third of the way
+        // along the box; kept inside the window and under the header.
+        let tip = actor.position.x + 4
+        let left = min(max((tip - width / 3).rounded(), 4), Self.W - 4 - width)
+        let head = ground + Self.headroom + CGFloat(BubbleArt.tail) + height
+        let top = min(head, Self.H - Self.bar - 2)
         let tailX = Int(min(max(tip + 3 - left, 4), width - 7))
         if let image = BubbleArt.image(width: Int(width), height: Int(height), tailX: tailX, more: page + 1 < pages.count,
                                        ink: Self.ink, paper: Self.paper) {
@@ -559,13 +683,14 @@ final class RoomScene: SKScene {
         if vitalsClock >= 1, !minimised {
             vitalsClock = 0
             refreshVitals()
+            refreshRecapAlpha()
         }
         defer {
             // Only draw as often as what is on screen needs: 8 fps typing and the typewriter get 15,
             // the 3 to 5 fps idle poses and ambient loops 10, sleep and the orb 4. A resting window
             // stops once its changes are drawn.
             let speed = art.theme.character.animations[animation]?.fps ?? 3
-            let wanted = minimised ? 4 : (typing || speed > 6 ? 15 : (state == .sleeping ? 4 : 10))
+            let wanted = minimised ? 4 : (typing || speed > 6 || celebrating ? 15 : (state == .sleeping ? 4 : 10))
             if wanted != fps {
                 fps = wanted
                 view?.preferredFramesPerSecond = wanted
@@ -577,6 +702,7 @@ final class RoomScene: SKScene {
 
         guard !minimised else { return advanceOrb(dt) }
         chamber.advance(dt, still: still)
+        advanceCelebration(dt)
 
         if state == .idle {
             nextFlourish -= dt

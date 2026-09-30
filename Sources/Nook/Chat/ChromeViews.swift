@@ -29,12 +29,21 @@ final class ResizeGrip: NSView {
     override func mouseUp(with event: NSEvent) { onDrag?(nil) }
 }
 
-/// The panel's glass background; also the drop target for files and images.
+/// The panel's glass background, tinted the mine's dusk purple; also the drop target for files
+/// and images. The tint is dark, so the glass keeps a dark appearance for legible text.
 final class DropGlass: NSVisualEffectView {
+    static let tint = NSColor(red: 0.08, green: 0.075, blue: 0.11, alpha: 0.94)
+
     var onFiles: (([URL]) -> Void)?
 
     override init(frame: NSRect) {
         super.init(frame: frame)
+        appearance = NSAppearance(named: .darkAqua)
+        let wash = NSView(frame: bounds)
+        wash.autoresizingMask = [.width, .height]
+        wash.wantsLayer = true
+        wash.layer?.backgroundColor = Self.tint.cgColor
+        addSubview(wash)
         registerForDraggedTypes(Attachments.dragTypes)
     }
 

@@ -70,6 +70,7 @@ final class AgentWindow: NSPanel {
     func refresh() {
         let quiet = controller?.isQuiet ?? false
         room.show(state: session.state, bubble: quiet ? "" : session.bubble, unread: session.unread)
+        room.showRecap(session.summary, at: session.summaryAt)
         room.showVitals(contextFraction: Double(session.contextTokens) / Double(max(session.contextLimit, 1)),
                         cost: session.costUSD, changedFiles: session.changedFiles, turnStarted: session.turnStarted)
         refreshToolTip()
