@@ -53,7 +53,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     private let features: [Feature] = [
         Persistence(), Hotkeys(), QuietMode(), SettingsFeature(), Voice(), Capture(), Handoff(),
         FocusOverlay(), Hotspots(),
-        Notifications(), CalendarSync(), TaskHub(), NewAgent(),
+        Notifications(), CalendarSync(), TaskHub(), NewAgent(), ClaudeAuth(),
     ]
 
     /// Quiet mode: windows keep their state dot and badge but stop showing speech bubbles.

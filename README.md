@@ -12,8 +12,9 @@ without keeping several terminals in front of you. Native AppKit and SpriteKit, 
 ## Requirements
 
 - macOS 14 or later.
-- **Claude Code installed and logged in** (`claude --version` should work). Without it the windows
-  open and no agent ever answers.
+- **Claude Code installed** (`claude --version` should work). Agents run as whatever account it is
+  logged into; the menu bar menu shows which. If it is not logged in, **Log In to Claude…** (in that
+  menu, or in the chat when a turn fails for want of a login) runs `claude auth login` in Terminal.
 - A Swift toolchain to build: Xcode, or `xcode-select --install`.
 
 ## Install

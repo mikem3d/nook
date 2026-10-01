@@ -371,7 +371,8 @@ final class ChatPanel: NSPanel {
         log.show(session)
         activity.show(isVisible ? session : nil)
         showQueue(session)
-        showChips(ReplyChips.titles(for: ReplyChips.situation(busy: session.state.busy, transcript: session.transcript)))
+        showChips(session.needsLogin ? [ClaudeAuth.loginTitle]
+                  : ReplyChips.titles(for: ReplyChips.situation(busy: session.state.busy, transcript: session.transcript)))
         syncTimer()
     }
 
@@ -418,7 +419,11 @@ final class ChatPanel: NSPanel {
     private func showChips(_ titles: [String]) {
         guard titles != chipTitles else { return }
         chipTitles = titles
-        let chips = titles.map { title in PillButton(title: title) { [weak self] in self?.controller?.send(title) } }
+        let chips = titles.map { title in
+            PillButton(title: title) { [weak self] in
+                if title == ClaudeAuth.loginTitle { ClaudeAuth.shared?.login() } else { self?.controller?.send(title) }
+            }
+        }
         chipRow.setViews(chips, in: .leading)
         chipRow.isHidden = titles.isEmpty
     }

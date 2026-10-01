@@ -100,6 +100,9 @@ final class AgentSession {
     /// says how (an error, an interrupt, or the process dying mid-turn).
     private(set) var turnsCompleted = 0
     private(set) var lastTurnFailed = false
+    /// The last turn failed because Claude Code is not logged in. Cleared by the next message or
+    /// by a login landing.
+    private(set) var needsLogin = false
 
     /// Called on the main thread whenever anything visible changed.
     var onChange: (() -> Void)?
@@ -296,6 +299,7 @@ final class AgentSession {
     }
 
     private func deliver(_ text: String, attachments: [URL]) {
+        needsLogin = false
         let names = attachments.map(\.lastPathComponent)
         let running = turnStarted != nil
         transcript.append(.init(kind: .user, text: names.isEmpty ? text : "\(text) [\(names.joined(separator: ", "))]",
@@ -346,6 +350,20 @@ final class AgentSession {
 
     /// Tests drive the engine with protocol events recorded from a live session.
     func feed(_ event: [String: Any]) { handle(event) }
+
+    /// A login landed. The running `claude` read its credentials when it started, so let it go;
+    /// the next message starts a fresh one that resumes the same conversation.
+    func loggedIn(as account: String?) {
+        guard needsLogin else { return }
+        needsLogin = false
+        if let old = process {
+            process = nil
+            stdin = nil
+            old.terminate()
+        }
+        note("Logged in" + (account.map { " as \($0)" } ?? "") + ". Send your message again.")
+        if !state.busy { set(.idle) }
+    }
 
     /// The recap saved by an earlier run, shown until this run ends a turn of its own.
     func restoreSummary(_ text: String, at date: Date) {
@@ -415,6 +433,7 @@ final class AgentSession {
             stream(inner)
         case "assistant":
             inFlight = nil
+            if !nested, event["error"] as? String == "authentication_failed" { needsLogin = true }
             let message = event["message"] as? [String: Any] ?? [:]
             if !nested, let usage = message["usage"] as? [String: Any] {
                 let tokens = ["input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"]
@@ -426,7 +445,8 @@ final class AgentSession {
                 case "thinking":
                     if !nested { set(.thinking) }
                 case "text":
-                    guard !nested else { continue }
+                    // "Please run /login" names a command Nook does not have; the turn's remark says it instead.
+                    guard !nested, !needsLogin else { continue }
                     clearText()
                     let (text, line) = Self.splitSummary(block["text"] as? String ?? "")
                     if let line { turnSummary = line }
@@ -515,6 +535,9 @@ final class AgentSession {
         if interrupted {
             summary = "Interrupted"
             remark = "Interrupted."
+        } else if failed, needsLogin {
+            summary = "Not logged in"
+            remark = "Claude Code is not logged in. Use \(ClaudeAuth.loginTitle) below or in the menu bar, then send your message again."
         } else if failed {
             summary = "Something went wrong"
             remark = "The turn ended with an error" + ((result["result"] as? String).map { ": " + $0.prefix(200) } ?? ".")
